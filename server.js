@@ -132,92 +132,98 @@ async function scrapeHotel(url, checkin, checkout, persons) {
 }
 
 async function scrapeBooking(page, url) {
-  // Scroll progressif pour charger le tableau des chambres
+  // Intercepte les réponses réseau contenant les données de chambres
+  const capturedRooms = [];
+  let hotelNameFromApi = '';
+
+  page.on('response', async response => {
+    try {
+      const resUrl = response.url();
+      const ct = response.headers()['content-type'] || '';
+      if (!ct.includes('json')) return;
+
+      // Cherche les endpoints Booking qui retournent les room types
+      if (resUrl.includes('rooms') || resUrl.includes('availability') || resUrl.includes('block') || resUrl.includes('property') || resUrl.includes('room_type')) {
+        const json = await response.json().catch(() => null);
+        if (!json) return;
+
+        const str = JSON.stringify(json);
+
+        // Cherche des objets avec nom de chambre + prix
+        const extractRooms = (obj) => {
+          if (!obj || typeof obj !== 'object') return;
+          // Patterns communs dans les APIs Booking
+          if ((obj.room_name || obj.name || obj.title) && (obj.price !== undefined || obj.min_price !== undefined || obj.block_id !== undefined)) {
+            const name = obj.room_name || obj.name || obj.title || '';
+            if (name && name.length > 2 && name.length < 100) {
+              const price = obj.price || obj.min_price || obj.avg_price || '';
+              const maxPersons = obj.nr_adults || obj.max_occupancy || obj.max_persons || 2;
+              const available = obj.available !== false && obj.is_available !== false && !obj.sold_out;
+              capturedRooms.push({ name: String(name).trim(), price: price ? `${price}` : 'Voir le site', maxPersons: parseInt(maxPersons) || 2, available: !!available, id: String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-') });
+            }
+          }
+          if (Array.isArray(obj)) obj.forEach(extractRooms);
+          else if (typeof obj === 'object') Object.values(obj).forEach(v => { if (typeof v === 'object') extractRooms(v); });
+        };
+
+        extractRooms(json);
+        if (!hotelNameFromApi && json.hotel_name) hotelNameFromApi = json.hotel_name;
+      }
+    } catch(e) {}
+  });
+
+  // Scroll pour déclencher les appels API
   for (let i = 1; i <= 4; i++) {
     await page.evaluate(p => { try { window.scrollTo(0, document.body.scrollHeight * p); } catch(e){} }, i * 0.25);
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 1200));
   }
-  await new Promise(r => setTimeout(r, 2000));
+  await new Promise(r => setTimeout(r, 3000));
 
-  const hotelName = await page.evaluate(() => {
-    for (const s of ['[data-testid="property-name"]','h2.pp-header__title','h1[data-capla-component]','.hp__hotel-name','h1']) {
+  const hotelName = hotelNameFromApi || await page.evaluate(() => {
+    for (const s of ['[data-testid="property-name"]', 'h2.pp-header__title', '.hp__hotel-name', 'h1']) {
       const el = document.querySelector(s);
       if (el && el.innerText.trim()) return el.innerText.trim();
     }
     return document.title.split(/[–\-|]/)[0].trim();
   });
 
-  const html = await page.content();
-  require('fs').writeFileSync('debug-booking.html', html);
-  const roomLinkCount = (html.match(/rt-name-link/g) || []).length;
-  const pageTitle = await page.title();
-  console.log('[DEBUG] Title:', pageTitle, '| HTML size:', html.length, '| rt-name-link count:', roomLinkCount);
+  // Déduplique les chambres capturées depuis l'API
+  const seen = new Set();
+  const rooms = capturedRooms.filter(r => {
+    if (seen.has(r.name)) return false;
+    seen.add(r.name);
+    return true;
+  });
 
-  const rooms = await page.evaluate(() => {
-    const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-    const seen = new Set();
-    const result = [];
+  console.log('[BOOKING] Chambres capturées via API:', rooms.length);
 
-    // Tous les liens de type chambre : a[data-room-id]
-    const roomLinks = document.querySelectorAll('a[data-room-id][id^="room_type_id_"]');
-
-    roomLinks.forEach(link => {
-      try {
-        // Nom dans le span enfant
-        const nameEl = link.querySelector('span.hprt-roomtype-icon-link, span');
-        const name = clean(nameEl ? nameEl.textContent : link.textContent);
-        if (!name || name.length < 2 || seen.has(name)) return;
-        seen.add(name);
-
-        const roomId = link.getAttribute('data-room-id');
-
-        // Prix depuis le select de la même pièce
-        let price = 'Voir le site';
-        let available = false;
-        const selects = document.querySelectorAll(`select[data-room-id="${roomId}"]`);
-        selects.forEach(sel => {
-          const opt1 = sel.querySelector('option[value="1"]');
-          if (opt1) {
-            available = true;
-            const priceMatch = opt1.textContent.match(/[\d\s,.]+/g);
-            if (priceMatch) {
-              const nums = priceMatch.map(s => s.replace(/\s/g,'')).filter(s => s.length > 1);
-              if (nums.length) price = nums[nums.length - 1] + ' ' + (opt1.textContent.match(/[€$£]|AED|USD|EUR/) || [''])[0];
-            }
-          }
-        });
-
-        // Capacité via les icônes personnes dans le même bloc
-        const th = link.closest('th, td');
-        const row = link.closest('tr');
-        let maxPersons = 2;
-        if (row) {
-          const personIcons = row.querySelectorAll('.hprt-icon-person, [class*="adult"], [data-testid="adults-icon"]');
-          if (personIcons.length) maxPersons = personIcons.length;
-        }
-
-        // Soldout
-        const soldOut = row ? !!row.querySelector('.sold_out_room, .hprt-soldout-text, [class*="soldout"]') : false;
-        if (soldOut) available = false;
-
-        result.push({ name, price: price.trim() || 'Voir le site', maxPersons, available, id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-') });
-      } catch(e) {}
-    });
-
-    // Fallback si rien trouvé : chercher les noms via data-room-name
-    if (!result.length) {
-      document.querySelectorAll('[data-room-name]').forEach(el => {
+  // Si l'API n'a rien donné, fallback HTML
+  if (!rooms.length) {
+    const htmlRooms = await page.evaluate(() => {
+      const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+      const seen2 = new Set();
+      const result = [];
+      document.querySelectorAll('a[data-room-id][id^="room_type_id_"]').forEach(link => {
         try {
-          const name = clean(el.getAttribute('data-room-name') || el.textContent);
-          if (!name || seen.has(name)) return;
-          seen.add(name);
-          result.push({ name, price: 'Voir le site', maxPersons: 2, available: true, id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-') });
+          const nameEl = link.querySelector('span');
+          const name = clean(nameEl ? nameEl.textContent : link.textContent);
+          if (!name || name.length < 2 || seen2.has(name)) return;
+          seen2.add(name);
+          const roomId = link.getAttribute('data-room-id');
+          let price = 'Voir le site', available = false;
+          document.querySelectorAll(`select[data-room-id="${roomId}"] option[value="1"]`).forEach(opt => {
+            available = true;
+            const m = opt.textContent.match(/\d[\d\s,.]*/);
+            if (m) price = m[0].trim();
+          });
+          result.push({ name, price, maxPersons: 2, available, id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-') });
         } catch(e) {}
       });
-    }
-
-    return result;
-  });
+      return result;
+    });
+    rooms.push(...htmlRooms);
+    console.log('[BOOKING] Fallback HTML:', htmlRooms.length, 'chambres');
+  }
 
   return { name: hotelName, rooms, url };
 }
