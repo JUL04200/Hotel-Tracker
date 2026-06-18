@@ -17,9 +17,11 @@ app.use(express.static(path.join(__dirname, 'public')));
 const DATA_FILE = path.join(__dirname, 'data.json');
 const VAPID_FILE = path.join(__dirname, 'vapid.json');
 
-// VAPID keys persistants
+// VAPID keys — priorité aux variables d'env Railway, sinon fichier local
 let VAPID_KEYS;
-if (fs.existsSync(VAPID_FILE)) {
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  VAPID_KEYS = { publicKey: process.env.VAPID_PUBLIC_KEY, privateKey: process.env.VAPID_PRIVATE_KEY };
+} else if (fs.existsSync(VAPID_FILE)) {
   VAPID_KEYS = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf8'));
 } else {
   VAPID_KEYS = webpush.generateVAPIDKeys();
