@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hotel Tracker</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#7c6af7">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Hotels">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<style>
+  :root {
+    --bg: #0f0f13;
+    --bg2: #16161d;
+    --bg3: #1e1e28;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.12);
+    --text: #f0f0f5;
+    --text2: #9999b3;
+    --text3: #5a5a7a;
+    --accent: #7c6af7;
+    --accent2: #9d8fff;
+    --accent-bg: rgba(124,106,247,0.12);
+    --green: #22c55e;
+    --green-bg: rgba(34,197,94,0.1);
+    --red: #ef4444;
+    --red-bg: rgba(239,68,68,0.1);
+    --amber: #f59e0b;
+    --amber-bg: rgba(245,158,11,0.1);
+    --radius: 12px;
+    --radius-sm: 8px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  .top-bar {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .top-bar .logo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .logo-icon {
+    width: 30px;
+    height: 30px;
+    background: var(--accent);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+  }
+
+  .top-bar .spacer { flex: 1; }
+
+  .notif-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border2);
+    background: transparent;
+    color: var(--text2);
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.15s;
+  }
+  .notif-btn:hover { background: var(--bg3); color: var(--text); }
+  .notif-btn.enabled { border-color: var(--green); color: var(--green); background: var(--green-bg); }
+
+  .main { max-width: 860px; margin: 0 auto; padding: 32px 20px; }
+
+  .hero {
+    text-align: center;
+    margin-bottom: 36px;
+  }
+  .hero h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+  .hero p { color: var(--text2); font-size: 15px; }
+
+  .add-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 28px;
+  }
+
+  .add-card h2 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 14px;
+  }
+
+  .url-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .url-input {
+    flex: 1;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .url-input::placeholder { color: var(--text3); }
+  .url-input:focus { border-color: var(--accent); }
+
+  .btn-primary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 18px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.15s;
+  }
+  .btn-primary:hover { opacity: 0.88; }
+  .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .loading-bar {
+    display: none;
+    margin-top: 14px;
+    background: var(--bg3);
+    border-radius: 4px;
+    height: 3px;
+    overflow: hidden;
+  }
+  .loading-bar.show { display: block; }
+  .loading-bar-inner {
+    height: 100%;
+    width: 40%;
+    background: var(--accent);
+    border-radius: 4px;
+    animation: slide 1.2s ease-in-out infinite;
+  }
+  @keyframes slide {
+    0% { transform: translateX(-100%); }
+    50% { transform: translateX(200%); }
+    100% { transform: translateX(200%); }
+  }
+
+  .loading-msg {
+    display: none;
+    margin-top: 12px;
+    color: var(--text2);
+    font-size: 13px;
+    text-align: center;
+  }
+  .loading-msg.show { display: block; }
+
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.65);
+    z-index: 200;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.show { display: flex; }
+
+  .modal {
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: 16px;
+    width: 90%;
+    max-width: 580px;
+    max-height: 85vh;
+    overflow-y: auto;
+    padding: 24px;
+    animation: fadeUp 0.2s ease;
+  }
+  @keyframes fadeUp { from { opacity:0; transform: translateY(16px); } to { opacity:1; transform: translateY(0); } }
+
+  .modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .modal-title { font-size: 18px; font-weight: 600; }
+  .modal-sub { font-size: 13px; color: var(--text2); margin-top: 2px; }
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--text3);
+    cursor: pointer;
+    font-size: 20px;
+    padding: 2px;
+    line-height: 1;
+  }
+  .modal-close:hover { color: var(--text); }
+
+  .rooms-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+
+  .room-card {
+    background: var(--bg3);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+  }
+  .room-card:hover { border-color: var(--accent); background: rgba(124,106,247,0.06); }
+  .room-card.selected { border-color: var(--accent); background: var(--accent-bg); }
+  .room-card.unavailable { opacity: 0.5; }
+
+  .room-card-top { display: flex; align-items: center; justify-content: space-between; }
+  .room-name { font-weight: 500; font-size: 14px; }
+  .room-price { font-size: 13px; color: var(--accent2); font-weight: 500; }
+
+  .room-meta {
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text2);
+  }
+
+  .room-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .badge-avail { background: var(--green-bg); color: var(--green); }
+  .badge-unavail { background: var(--red-bg); color: var(--red); }
+
+  .persons-row {
+    margin-bottom: 18px;
+  }
+  .persons-row label { font-size: 13px; color: var(--text2); display: block; margin-bottom: 8px; }
+  .persons-selector {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .person-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    color: var(--text2);
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.12s;
+  }
+  .person-btn:hover { border-color: var(--accent); color: var(--text); }
+  .person-btn.selected { border-color: var(--accent); background: var(--accent-bg); color: var(--accent2); }
+
+  .dates-row {
+    margin-bottom: 18px;
+  }
+  .dates-row label { font-size: 13px; color: var(--text2); display: block; margin-bottom: 8px; }
+  .dates-inputs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .date-field { display: flex; flex-direction: column; gap: 4px; }
+  .date-field span { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.05em; }
+  .date-input {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 9px 12px;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.15s;
+    width: 100%;
+    cursor: pointer;
+    color-scheme: dark;
+  }
+  .date-input:focus { border-color: var(--accent); }
+  .date-input::-webkit-calendar-picker-indicator { filter: invert(0.6); cursor: pointer; }
+  .nights-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: var(--accent2);
+    background: var(--accent-bg);
+    border-radius: var(--radius-sm);
+    padding: 4px 10px;
+    margin-top: 8px;
+    display: none;
+  }
+
+  .interval-row {
+    margin-bottom: 20px;
+  }
+  .interval-row label { font-size: 13px; color: var(--text2); display: block; margin-bottom: 8px; }
+  .interval-btns { display: flex; gap: 6px; }
+  .interval-btn {
+    padding: 5px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    color: var(--text2);
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.12s;
+  }
+  .interval-btn:hover { border-color: var(--accent); color: var(--text); }
+  .interval-btn.selected { border-color: var(--accent); background: var(--accent-bg); color: var(--accent2); }
+
+  .confirm-btn {
+    width: 100%;
+    padding: 12px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .confirm-btn:hover { opacity: 0.88; }
+  .confirm-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .watchers-section h2 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 14px;
+  }
+
+  .watcher-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .watcher-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: var(--radius-sm);
+    background: var(--accent-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent2);
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  .watcher-info { flex: 1; min-width: 0; }
+  .watcher-hotel { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .watcher-room { font-size: 13px; color: var(--text2); margin-top: 2px; }
+  .watcher-meta {
+    display: flex;
+    gap: 10px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  .meta-tag {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text3);
+  }
+
+  .pulse-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--green);
+    display: inline-block;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.75); }
+  }
+
+  .watcher-actions { display: flex; align-items: center; gap: 8px; }
+  .icon-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: none;
+    color: var(--text3);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    transition: all 0.12s;
+  }
+  .icon-btn:hover { background: var(--bg3); color: var(--text); }
+  .icon-btn.del:hover { border-color: var(--red); color: var(--red); background: var(--red-bg); }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text3);
+  }
+  .empty-state i { font-size: 40px; margin-bottom: 10px; display: block; }
+  .empty-state p { font-size: 14px; }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-sm);
+    padding: 12px 16px;
+    font-size: 14px;
+    z-index: 999;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transform: translateY(80px);
+    opacity: 0;
+    transition: all 0.25s ease;
+    max-width: 320px;
+  }
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast.success { border-left: 3px solid var(--green); }
+  .toast.error { border-left: 3px solid var(--red); }
+  .toast.info { border-left: 3px solid var(--accent); }
+
+  .site-chips {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .site-chip {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    color: var(--text3);
+    cursor: pointer;
+    background: none;
+    transition: all 0.12s;
+  }
+  .site-chip:hover { border-color: var(--accent); color: var(--text2); }
+
+  a { color: var(--accent2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <div class="logo">
+    <div class="logo-icon"><i class="ti ti-building" style="color:#fff;font-size:16px"></i></div>
+    Hotel Tracker
+  </div>
+  <div class="spacer"></div>
+  <button class="notif-btn" id="notifBtn" onclick="toggleNotifications()">
+    <i class="ti ti-bell"></i>
+    <span id="notifText">Activer les notifications</span>
+  </button>
+</div>
+
+<div class="main">
+  <div class="hero">
+    <h1>Surveille ta chambre d'hôtel</h1>
+    <p>Colle le lien d'un hôtel, choisis ta chambre et reçois une notif dès qu'elle se libère.</p>
+  </div>
+
+  <div class="add-card">
+    <h2>Ajouter un hôtel à surveiller</h2>
+    <div class="url-row">
+      <input class="url-input" id="urlInput" type="url"
+        placeholder="https://www.booking.com/hotel/fr/... ou hotels.com/..."
+        autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+        onkeydown="if(event.key==='Enter') analyzeHotel()">
+      <button class="btn-primary" id="analyzeBtn" onclick="analyzeHotel()">
+        <i class="ti ti-search"></i> Analyser
+      </button>
+    </div>
+    <div class="site-chips">
+      <span style="font-size:11px;color:var(--text3);margin-right:4px">Exemples :</span>
+      <button class="site-chip" onclick="setExample('booking')">booking.com</button>
+      <button class="site-chip" onclick="setExample('hotels')">hotels.com</button>
+    </div>
+    <div class="loading-bar" id="loadingBar"><div class="loading-bar-inner"></div></div>
+    <div class="loading-msg" id="loadingMsg"><i class="ti ti-loader" style="animation:spin 1s linear infinite;margin-right:6px"></i>Analyse de l'hôtel en cours, ça peut prendre 15-30 secondes...</div>
+  </div>
+
+  <div class="watchers-section">
+    <h2>Surveillances actives</h2>
+    <div id="watchersList"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+  <div class="modal" id="modal">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="modalHotelName">Choisir une chambre</div>
+        <div class="modal-sub" id="modalHotelUrl"></div>
+      </div>
+      <button class="modal-close" onclick="closeModalDirect()"><i class="ti ti-x"></i></button>
+    </div>
+
+    <div class="rooms-grid" id="roomsGrid"></div>
+
+    <div class="dates-row">
+      <label><i class="ti ti-calendar" style="margin-right:4px"></i>Dates de séjour</label>
+      <div class="dates-inputs">
+        <div class="date-field">
+          <span>Arrivée</span>
+          <input class="date-input" type="date" id="checkinDate" onchange="updateNights()">
+        </div>
+        <div class="date-field">
+          <span>Départ</span>
+          <input class="date-input" type="date" id="checkoutDate" onchange="updateNights()">
+        </div>
+      </div>
+      <div class="nights-badge" id="nightsBadge"><i class="ti ti-moon" style="margin-right:5px;font-size:12px"></i><span id="nightsText"></span></div>
+    </div>
+
+    <div class="persons-row">
+      <label><i class="ti ti-users" style="margin-right:4px"></i>Nombre de personnes</label>
+      <div class="persons-selector" id="personsSel"></div>
+    </div>
+
+    <div class="interval-row">
+      <label><i class="ti ti-clock" style="margin-right:4px"></i>Vérifier toutes les</label>
+      <div class="interval-btns">
+        <button class="interval-btn selected" data-val="5" onclick="selectInterval(this)">5 min</button>
+        <button class="interval-btn" data-val="10" onclick="selectInterval(this)">10 min</button>
+        <button class="interval-btn" data-val="30" onclick="selectInterval(this)">30 min</button>
+        <button class="interval-btn" data-val="60" onclick="selectInterval(this)">1 h</button>
+      </div>
+    </div>
+
+    <button class="confirm-btn" id="confirmBtn" onclick="addWatcher()" disabled>
+      <i class="ti ti-bell-plus"></i> Surveiller cette chambre
+    </button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<style>
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+</style>
+
+<script>
+const SESSION_ID = localStorage.getItem('ht_session') || (() => { const id = 'sess_' + Math.random().toString(36).slice(2); localStorage.setItem('ht_session', id); return id; })();
+let currentHotel = null;
+let selectedRoom = null;
+let selectedPersons = 2;
+let selectedInterval = 5;
+let notifEnabled = false;
+let vapidKey = null;
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+function tomorrowStr() {
+  const d = new Date(); d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+function updateNights() {
+  const cin = document.getElementById('checkinDate').value;
+  const cout = document.getElementById('checkoutDate').value;
+  const badge = document.getElementById('nightsBadge');
+  if (cin && cout && cout > cin) {
+    const diff = Math.round((new Date(cout) - new Date(cin)) / 86400000);
+    document.getElementById('nightsText').textContent = diff + ' nuit' + (diff > 1 ? 's' : '');
+    badge.style.display = 'flex';
+    if (cin >= document.getElementById('checkoutDate').min) {
+      document.getElementById('checkoutDate').min = cin;
+    }
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+async function init() {
+  await loadVapidKey();
+  await loadWatchers();
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+}
+
+async function loadVapidKey() {
+  try {
+    const r = await fetch('/vapid-public-key');
+    const d = await r.json();
+    vapidKey = d.publicKey;
+  } catch(e) {}
+}
+
+async function toggleNotifications() {
+  if (notifEnabled) return;
+  if (!('Notification' in window)) return toast('Notifications non supportées', 'error');
+
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') return toast('Notifications refusées', 'error');
+
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidKey)
+    });
+    await fetch('/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscription: sub, sessionId: SESSION_ID })
+    });
+    notifEnabled = true;
+    document.getElementById('notifBtn').classList.add('enabled');
+    document.getElementById('notifText').textContent = 'Notifications activées';
+    toast('Notifications activées !', 'success');
+  } catch(e) {
+    toast('Erreur notifications: ' + e.message, 'error');
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return new Uint8Array([...rawData].map(c => c.charCodeAt(0)));
+}
+
+async function analyzeHotel() {
+  const url = document.getElementById('urlInput').value.trim();
+  if (!url) return toast('Entre un lien d\'hôtel', 'error');
+  if (!url.startsWith('http')) return toast('Lien invalide', 'error');
+
+  document.getElementById('analyzeBtn').disabled = true;
+  document.getElementById('loadingBar').classList.add('show');
+  document.getElementById('loadingMsg').classList.add('show');
+
+  try {
+    const r = await fetch('/scrape', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url,
+        checkin: document.getElementById('checkinDate')?.value || null,
+        checkout: document.getElementById('checkoutDate')?.value || null,
+        persons: selectedPersons
+      })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Erreur scraping');
+
+    currentHotel = { ...data, url };
+    openModal(data);
+  } catch(e) {
+    toast('Erreur : ' + e.message, 'error');
+  } finally {
+    document.getElementById('analyzeBtn').disabled = false;
+    document.getElementById('loadingBar').classList.remove('show');
+    document.getElementById('loadingMsg').classList.remove('show');
+  }
+}
+
+function openModal(data) {
+  selectedRoom = null;
+  document.getElementById('confirmBtn').disabled = true;
+  document.getElementById('modalHotelName').textContent = data.name || 'Hôtel';
+  document.getElementById('modalHotelUrl').textContent = shortenUrl(currentHotel.url);
+
+  const today = todayStr();
+  const tomorrow = tomorrowStr();
+  const cin = document.getElementById('checkinDate');
+  const cout = document.getElementById('checkoutDate');
+  cin.min = today;
+  cout.min = tomorrow;
+  if (!cin.value || cin.value < today) cin.value = today;
+  if (!cout.value || cout.value <= cin.value) cout.value = tomorrow;
+  updateNights();
+
+  const grid = document.getElementById('roomsGrid');
+  grid.innerHTML = '';
+
+  if (!data.rooms || data.rooms.length === 0) {
+    grid.innerHTML = '<p style="color:var(--text2);font-size:13px">Aucune chambre trouvée automatiquement. Essaie un autre lien ou vérifie que la page est bien une page de chambre.</p>';
+  } else {
+    data.rooms.forEach(room => {
+      const card = document.createElement('div');
+      card.className = 'room-card' + (room.available ? '' : ' unavailable');
+      card.innerHTML = `
+        <div class="room-card-top">
+          <span class="room-name">${esc(room.name)}</span>
+          <span class="room-price">${esc(room.price)}</span>
+        </div>
+        <div class="room-meta">
+          <span><i class="ti ti-users" style="font-size:12px;margin-right:3px"></i>${room.maxPersons} pers. max</span>
+          <span class="room-badge ${room.available ? 'badge-avail' : 'badge-unavail'}">
+            ${room.available ? '● Disponible' : '● Indisponible'}
+          </span>
+        </div>`;
+      card.onclick = () => selectRoom(card, room);
+      grid.appendChild(card);
+    });
+  }
+
+  buildPersonsSelector(4);
+  document.getElementById('modalOverlay').classList.add('show');
+}
+
+function buildPersonsSelector(max) {
+  const sel = document.getElementById('personsSel');
+  sel.innerHTML = '';
+  for (let i = 1; i <= max; i++) {
+    const btn = document.createElement('button');
+    btn.className = 'person-btn' + (i === 2 ? ' selected' : '');
+    btn.innerHTML = `${i} <i class="ti ti-user" style="font-size:12px"></i>`;
+    btn.onclick = () => {
+      sel.querySelectorAll('.person-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      selectedPersons = i;
+    };
+    sel.appendChild(btn);
+  }
+  selectedPersons = 2;
+}
+
+function selectRoom(card, room) {
+  document.querySelectorAll('.room-card').forEach(c => c.classList.remove('selected'));
+  card.classList.add('selected');
+  selectedRoom = room;
+  document.getElementById('confirmBtn').disabled = false;
+  buildPersonsSelector(room.maxPersons);
+}
+
+function selectInterval(btn) {
+  document.querySelectorAll('.interval-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  selectedInterval = parseInt(btn.dataset.val);
+}
+
+async function addWatcher() {
+  if (!selectedRoom) return;
+  document.getElementById('confirmBtn').disabled = true;
+
+  try {
+    const r = await fetch('/watch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: currentHotel.url,
+        roomId: selectedRoom.id,
+        roomName: selectedRoom.name,
+        hotelName: currentHotel.name,
+        persons: selectedPersons,
+        sessionId: SESSION_ID,
+        interval: selectedInterval,
+        checkin: document.getElementById('checkinDate').value,
+        checkout: document.getElementById('checkoutDate').value
+      })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+
+    closeModalDirect();
+    toast('Surveillance ajoutée !', 'success');
+    await loadWatchers();
+    document.getElementById('urlInput').value = '';
+  } catch(e) {
+    toast('Erreur : ' + e.message, 'error');
+  } finally {
+    document.getElementById('confirmBtn').disabled = false;
+  }
+}
+
+async function loadWatchers() {
+  try {
+    const r = await fetch('/watchers');
+    const list = await r.json();
+    renderWatchers(list);
+  } catch(e) {}
+}
+
+function renderWatchers(list) {
+  const el = document.getElementById('watchersList');
+  if (list.length === 0) {
+    el.innerHTML = `<div class="empty-state"><i class="ti ti-eye-off"></i><p>Aucune surveillance active.<br>Ajoute un hôtel pour commencer.</p></div>`;
+    return;
+  }
+
+  el.innerHTML = list.map(w => `
+    <div class="watcher-card">
+      <div class="watcher-icon"><i class="ti ti-building"></i></div>
+      <div class="watcher-info">
+        <div class="watcher-hotel">${esc(w.hotelName || 'Hôtel')}</div>
+        <div class="watcher-room">${esc(w.roomName)}</div>
+        <div class="watcher-meta">
+          <span class="meta-tag"><span class="pulse-dot"></span> Actif</span>
+          <span class="meta-tag"><i class="ti ti-users" style="font-size:11px"></i> ${w.persons} pers.</span>
+          ${w.checkin ? `<span class="meta-tag"><i class="ti ti-calendar" style="font-size:11px"></i> ${formatDate(w.checkin)} → ${formatDate(w.checkout)}</span>` : ''}
+          <span class="meta-tag"><i class="ti ti-clock" style="font-size:11px"></i> toutes les ${w.interval} min</span>
+          ${w.lastCheck ? `<span class="meta-tag"><i class="ti ti-refresh" style="font-size:11px"></i> ${timeAgo(w.lastCheck)}</span>` : ''}
+        </div>
+        <div style="margin-top:6px">
+          <a href="${esc(w.url)}" target="_blank" style="font-size:12px">
+            <i class="ti ti-external-link" style="font-size:11px"></i> ${shortenUrl(w.url)}
+          </a>
+        </div>
+      </div>
+      <div class="watcher-actions">
+        <button class="icon-btn del" onclick="removeWatcher('${w.id}')" title="Supprimer">
+          <i class="ti ti-trash"></i>
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function removeWatcher(id) {
+  await fetch('/watch/' + id, { method: 'DELETE' });
+  toast('Surveillance supprimée', 'info');
+  await loadWatchers();
+}
+
+function closeModal(e) {
+  if (e.target === document.getElementById('modalOverlay')) closeModalDirect();
+}
+function closeModalDirect() {
+  document.getElementById('modalOverlay').classList.remove('show');
+}
+
+let toastTimer;
+function toast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  const icons = { success: 'ti-check', error: 'ti-alert-circle', info: 'ti-info-circle' };
+  el.innerHTML = `<i class="ti ${icons[type] || 'ti-info-circle'}"></i> ${esc(msg)}`;
+  el.className = `toast show ${type}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function shortenUrl(url) {
+  try { return new URL(url).hostname + '...'; } catch(e) { return url.slice(0,40) + '...'; }
+}
+
+function timeAgo(iso) {
+  const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (diff < 60) return 'il y a ' + diff + 's';
+  if (diff < 3600) return 'il y a ' + Math.floor(diff/60) + ' min';
+  return 'il y a ' + Math.floor(diff/3600) + 'h';
+}
+
+function formatDate(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function setExample(site) {
+  const examples = {
+    booking: 'https://www.booking.com/hotel/fr/paris-marriott-opera-ambassador.fr.html',
+    hotels: 'https://fr.hotels.com/ho116671/paris-marriott-opera-ambassador-hotel-paris-france/'
+  };
+  document.getElementById('urlInput').value = examples[site] || '';
+}
+
+setInterval(loadWatchers, 30000);
+init();
+</script>
+</body>
+</html>

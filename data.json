@@ -1,0 +1,38 @@
+{
+  "watchers": [
+    {
+      "id": "8f5da431-9856-4bec-a02a-498efa472673",
+      "url": "https://www.booking.com/hotel/fr/campanile-paris-sud-saclay.fr.html?aid=304142&label=msn-TYhAxLoSG_KBC3Jf6CTAqg-80264540053145%3Atidat-2332064162978968%3Aloc-66%3Aneo%3Amtb%3Alp20061%3Adec%3Acid520890162%3Aagid1284230904149238%3Aclkid9c4e621a63fe17be2e7c082e5d79a62a&sid=898f791a7e1cbe9a70e914837f076b16&checkin=2026-06-24&checkout=2026-06-26&dest_id=2497275&dest_type=hotel&dist=0&group_adults=2&group_children=0&hapos=1&hpos=1&no_rooms=1&req_adults=2&req_children=0&room1=A%2CA&sb_price_type=total&soh=1&sr_order=popularity&srepoch=1781808814&srpvid=d7cd84d66ee80383&type=total&ucfs=1&#no_availability_msg",
+      "roomId": "chambre-double-sup-rieure",
+      "roomName": "Chambre Double SupÃ©rieure",
+      "hotelName": "Campanile PRIME - Paris Saclay",
+      "persons": 2,
+      "sessionId": "sess_lemcqo8ppr",
+      "interval": 5,
+      "checkin": "2026-06-18",
+      "checkout": "2026-06-19",
+      "wasAvailable": true,
+      "lastCheck": "2026-06-18T19:25:13.938Z",
+      "lastData": {
+        "name": "Chambre Double Supérieure",
+        "price": "230 €",
+        "maxPersons": 1,
+        "available": true,
+        "id": "chambre-double-sup-rieure"
+      },
+      "createdAt": "2026-06-18T18:57:30.243Z"
+    }
+  ],
+  "subscriptions": [
+    {
+      "sessionId": "sess_ua8m7vd5tej",
+      "sub": {
+        "endpoint": "https://web.push.apple.com/QMslmtgt_uu5K3sDvmWdfkvfrSZHn214wcQ-p7LIxHI50kyL7Hefj5LIuhovQXRxpGGWFFiCn_fUmnCybLJkl7APTX5lj0WonJLtgqXQKCY9tH1lxdABDG33LFOTQh1JrBvRs7aqfpdT_tbjgk1vLUKB0OQD6dyvGm9gPK-A0J4",
+        "keys": {
+          "p256dh": "BE7gl3UimDHpWmxHoFtNWfJHUTUANKLGdZW95MZ8pJFOvemo7QOwc2LhtikfjF4us2JPeMnsivnhfiBohQhBgWA",
+          "auth": "yQfIGINzMfi7ij6PYXqxbw"
+        }
+      }
+    }
+  ]
+}
