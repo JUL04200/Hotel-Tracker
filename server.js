@@ -98,13 +98,39 @@ async function scrapeHotel(url, checkin, checkout, persons) {
     executablePath: isCloud
       ? (process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable')
       : 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-dev-shm-usage',
+      '--disable-infobars',
+      '--window-size=1366,768',
+      '--disable-extensions',
+      '--disable-gpu',
+      '--lang=fr-FR',
+    ],
   });
 
   try {
     const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-    await page.setExtraHTTPHeaders({ 'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8' });
+
+    // Désactive les flags qui trahissent un headless browser
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['fr-FR', 'fr', 'en-US', 'en'] });
+      window.chrome = { runtime: {} };
+    });
+
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+    await page.setViewport({ width: 1366, height: 768 });
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+      'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+    });
 
     const isBooking = url.includes('booking.com');
     const isHotels = url.includes('hotels.com') || url.includes('expedia.com');
@@ -113,7 +139,13 @@ async function scrapeHotel(url, checkin, checkout, persons) {
     console.log('[SCRAPE] URL:', targetUrl);
 
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await new Promise(r => setTimeout(r, 5000));
+
+    // Simule un comportement humain : mouvement de souris + scroll progressif
+    await new Promise(r => setTimeout(r, 2000));
+    await page.mouse.move(300 + Math.random() * 200, 200 + Math.random() * 100);
+    await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+    await page.mouse.move(400 + Math.random() * 200, 400 + Math.random() * 100);
+    await new Promise(r => setTimeout(r, 3000));
 
     let hotelData = { name: '', rooms: [], url };
 
