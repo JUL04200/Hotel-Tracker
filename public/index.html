@@ -645,6 +645,16 @@ async function init() {
   await loadWatchers();
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
+    // Vérifie si déjà abonné aux notifs
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub && Notification.permission === 'granted') {
+        notifEnabled = true;
+        document.getElementById('notifBtn').classList.add('enabled');
+        document.getElementById('notifText').textContent = 'Notifications activées';
+      }
+    } catch(e) {}
   }
 }
 
