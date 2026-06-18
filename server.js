@@ -267,8 +267,23 @@ async function checkAvailability(watcherId) {
   if (!watcher) return;
 
   try {
-    const data = await scrapeHotel(watcher.url);
+    const data = await scrapeHotel(watcher.url, watcher.checkin, watcher.checkout, watcher.persons);
     const targetRoom = data.rooms.find(r => r.id === watcher.roomId || r.name === watcher.roomName);
+
+    if (!data.rooms.length) {
+      // Scraper a rien trouvé — notif d'erreur (max 1 fois par heure)
+      const lastErrKey = `err_${watcherId}`;
+      const lastErr = watcher[lastErrKey] || 0;
+      if (Date.now() - lastErr > 3600000) {
+        watcher[lastErrKey] = Date.now();
+        const sub = pushSubscriptions.get(watcher.sessionId);
+        if (sub) webpush.sendNotification(sub, JSON.stringify({
+          title: '⚠️ Problème de vérification',
+          body: `Impossible de lire les chambres de ${watcher.hotelName}. Booking a peut-être changé. Vérifie manuellement.`,
+          url: watcher.url
+        })).catch(() => {});
+      }
+    }
 
     if (targetRoom && targetRoom.available && !watcher.wasAvailable) {
       watcher.wasAvailable = true;
@@ -281,6 +296,18 @@ async function checkAvailability(watcherId) {
     watcher.lastData = targetRoom;
   } catch (e) {
     console.error('Check failed for', watcherId, e.message);
+    // Notif si crash total (max 1 fois par heure)
+    const lastErrKey = `err_${watcherId}`;
+    const lastErr = watcher[lastErrKey] || 0;
+    if (Date.now() - lastErr > 3600000) {
+      watcher[lastErrKey] = Date.now();
+      const sub = pushSubscriptions.get(watcher.sessionId);
+      if (sub) webpush.sendNotification(sub, JSON.stringify({
+        title: '❌ Erreur de vérification',
+        body: `${watcher.hotelName} — ${e.message.slice(0, 80)}`,
+        url: watcher.url
+      })).catch(() => {});
+    }
   }
 }
 
