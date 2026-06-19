@@ -532,12 +532,45 @@ async function handleTelegramMessage(msg) {
   }
 
   if (/^https?:\/\//i.test(text)) {
-    telegramPending.set(chatId, { step: 'checkin', url: text });
-    return telegramReply(chatId, '📅 Quelle est la date d\'arrivée ? (format JJ-MM-AAAA)');
+    await telegramReply(chatId, '🔍 Analyse de l\'hôtel en cours...');
+    try {
+      // Date par défaut éloignée pour maximiser les chances de voir toutes les chambres listées
+      const probeIn = new Date(); probeIn.setDate(probeIn.getDate() + 30);
+      const probeOut = new Date(probeIn); probeOut.setDate(probeOut.getDate() + 1);
+      const probeCheckin = probeIn.toISOString().slice(0, 10);
+      const probeCheckout = probeOut.toISOString().slice(0, 10);
+
+      const data = await scrapeHotel(text, probeCheckin, probeCheckout, 2);
+      if (!data.rooms.length) {
+        return telegramReply(chatId, `⚠️ Aucune chambre trouvée pour ${data.name || 'cet hôtel'}. Vérifie le lien manuellement.`);
+      }
+      telegramPending.set(chatId, { step: 'room', data, url: text });
+      const list = data.rooms.map((r, i) => `${i + 1}. ${r.name} — ${r.price} (max ${r.maxPersons} pers.)`).join('\n');
+      return telegramReply(chatId, `🏨 <b>${data.name || 'Hôtel'}</b>\n\n${list}\n\nRéponds avec le numéro de la chambre à surveiller.`);
+    } catch (e) {
+      return telegramReply(chatId, `❌ Erreur : ${e.message}`);
+    }
   }
 
   const pending = telegramPending.get(chatId);
   if (!pending) return telegramReply(chatId, 'Envoie d\'abord un lien d\'hôtel.');
+
+  if (pending.step === 'room') {
+    const num = parseInt(text, 10);
+    const room = !isNaN(num) ? pending.data.rooms[num - 1] : null;
+    if (!room) return telegramReply(chatId, 'Numéro invalide, réessaie.');
+    pending.room = room;
+    pending.step = 'persons';
+    return telegramReply(chatId, '👥 Combien de personnes ?');
+  }
+
+  if (pending.step === 'persons') {
+    const persons = parseInt(text, 10);
+    if (isNaN(persons) || persons < 1) return telegramReply(chatId, 'Envoie juste un nombre, ex: 2');
+    pending.persons = persons;
+    pending.step = 'checkin';
+    return telegramReply(chatId, '📅 Quelle est la date d\'arrivée ? (format JJ-MM-AAAA)');
+  }
 
   if (pending.step === 'checkin') {
     const date = parseDate(text);
@@ -551,41 +584,11 @@ async function handleTelegramMessage(msg) {
     const date = parseDate(text);
     if (!date) return telegramReply(chatId, 'Format invalide. Envoie la date au format JJ-MM-AAAA.');
     pending.checkout = date;
-    pending.step = 'persons';
-    return telegramReply(chatId, '👥 Combien de personnes ?');
-  }
-
-  if (pending.step === 'persons') {
-    const persons = parseInt(text, 10);
-    if (isNaN(persons) || persons < 1) return telegramReply(chatId, 'Envoie juste un nombre, ex: 2');
-    pending.persons = persons;
-
-    await telegramReply(chatId, '🔍 Analyse de l\'hôtel en cours...');
-    try {
-      const data = await scrapeHotel(pending.url, pending.checkin, pending.checkout, persons);
-      if (!data.rooms.length) {
-        telegramPending.delete(chatId);
-        return telegramReply(chatId, `⚠️ Aucune chambre trouvée pour ${data.name || 'cet hôtel'} à ces dates. Vérifie le lien manuellement.`);
-      }
-      pending.data = data;
-      pending.step = 'room';
-      const list = data.rooms.map((r, i) => `${i + 1}. ${r.name} — ${r.price} (max ${r.maxPersons} pers.)`).join('\n');
-      return telegramReply(chatId, `🏨 <b>${data.name || 'Hôtel'}</b>\n\n${list}\n\nRéponds avec le numéro de la chambre à surveiller.`);
-    } catch (e) {
-      telegramPending.delete(chatId);
-      return telegramReply(chatId, `❌ Erreur : ${e.message}`);
-    }
-  }
-
-  if (pending.step === 'room') {
-    const num = parseInt(text, 10);
-    const room = !isNaN(num) ? pending.data.rooms[num - 1] : null;
-    if (!room) return telegramReply(chatId, 'Numéro invalide, réessaie.');
 
     createWatcher({
       url: pending.url,
-      roomId: room.id,
-      roomName: room.name,
+      roomId: pending.room.id,
+      roomName: pending.room.name,
       hotelName: pending.data.name,
       persons: pending.persons,
       sessionId: null,
