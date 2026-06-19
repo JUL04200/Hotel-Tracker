@@ -505,11 +505,9 @@ function parseDate(text) {
 function clearWatchersForChat() {
   let count = 0;
   for (const [id, w] of watchers) {
-    if (w.sessionId === null || w.sessionId === undefined) {
-      if (w.job) { try { w.job.stop(); } catch(e) {} }
-      watchers.delete(id);
-      count++;
-    }
+    if (w.job) { try { w.job.stop(); } catch(e) {} }
+    watchers.delete(id);
+    count++;
   }
   saveData();
   return count;
