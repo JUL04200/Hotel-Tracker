@@ -408,13 +408,22 @@ async function scrapeGeneric(page, url) {
   };
 }
 
+function normalizeRoomName(s) {
+  return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
 async function checkAvailability(watcherId) {
   const watcher = watchers.get(watcherId);
   if (!watcher) return;
 
   try {
     const data = await scrapeHotel(watcher.url, watcher.checkin, watcher.checkout, watcher.persons);
-    const targetRoom = data.rooms.find(r => r.id === watcher.roomId || r.name === watcher.roomName);
+    const watcherNameNorm = normalizeRoomName(watcher.roomName);
+    const targetRoom = data.rooms.find(r =>
+      r.id === watcher.roomId ||
+      r.name === watcher.roomName ||
+      normalizeRoomName(r.name) === watcherNameNorm
+    );
 
     if (!data.rooms.length) {
       // Distingue un vrai blocage (page illisible, nom d'hôtel introuvable) d'un simple "complet"
