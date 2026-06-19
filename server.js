@@ -390,6 +390,90 @@ async function sendNotification(watcher, room) {
   sendTelegram(`🎉 <b>Chambre disponible !</b>\n${watcher.hotelName}\n${room.name} — ${room.price}\n${watcher.url}`);
 }
 
+// --- Bot Telegram : lien hôtel -> liste de chambres -> choix -> watcher ---
+const telegramPending = new Map(); // chatId -> { data, url }
+let telegramOffset = 0;
+
+async function telegramReply(chatId, text) {
+  if (!TELEGRAM_BOT_TOKEN) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' })
+    });
+  } catch (e) {
+    console.error('[TELEGRAM] Erreur reply:', e.message);
+  }
+}
+
+async function handleTelegramMessage(msg) {
+  const chatId = String(msg.chat.id);
+  if (TELEGRAM_CHAT_ID && chatId !== String(TELEGRAM_CHAT_ID)) return; // ignore les autres
+  const text = (msg.text || '').trim();
+  if (!text) return;
+
+  if (text === '/start') {
+    return telegramReply(chatId, 'Salut ! Envoie-moi un lien Booking.com ou Hotels.com pour démarrer une surveillance.');
+  }
+
+  if (/^https?:\/\//i.test(text)) {
+    await telegramReply(chatId, '🔍 Analyse de l\'hôtel en cours...');
+    try {
+      const data = await scrapeHotel(text, null, null, 2);
+      if (!data.rooms.length) {
+        return telegramReply(chatId, `⚠️ Aucune chambre trouvée pour ${data.name || 'cet hôtel'}. Vérifie le lien manuellement.`);
+      }
+      telegramPending.set(chatId, { data, url: text });
+      const list = data.rooms.map((r, i) => `${i + 1}. ${r.name} — ${r.price} (max ${r.maxPersons} pers.)`).join('\n');
+      return telegramReply(chatId, `🏨 <b>${data.name || 'Hôtel'}</b>\n\n${list}\n\nRéponds avec le numéro de la chambre à surveiller.`);
+    } catch (e) {
+      return telegramReply(chatId, `❌ Erreur : ${e.message}`);
+    }
+  }
+
+  const num = parseInt(text, 10);
+  if (!isNaN(num)) {
+    const pending = telegramPending.get(chatId);
+    if (!pending) return telegramReply(chatId, 'Envoie d\'abord un lien d\'hôtel.');
+    const room = pending.data.rooms[num - 1];
+    if (!room) return telegramReply(chatId, 'Numéro invalide, réessaie.');
+
+    createWatcher({
+      url: pending.url,
+      roomId: room.id,
+      roomName: room.name,
+      hotelName: pending.data.name,
+      persons: 2,
+      sessionId: null,
+      interval: 5,
+      checkin: null,
+      checkout: null
+    });
+    telegramPending.delete(chatId);
+    return; // createWatcher envoie déjà la confirmation Telegram
+  }
+}
+
+async function pollTelegram() {
+  if (!TELEGRAM_BOT_TOKEN) return;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=${telegramOffset + 1}&timeout=20`);
+    const data = await r.json();
+    if (data.ok) {
+      for (const update of data.result) {
+        telegramOffset = update.update_id;
+        if (update.message) await handleTelegramMessage(update.message);
+      }
+    }
+  } catch (e) {
+    console.error('[TELEGRAM] Erreur polling:', e.message);
+  } finally {
+    setTimeout(pollTelegram, 1000);
+  }
+}
+if (TELEGRAM_BOT_TOKEN) pollTelegram();
+
 app.get('/vapid-public-key', (req, res) => {
   res.json({ publicKey: VAPID_KEYS.publicKey });
 });
@@ -418,8 +502,7 @@ app.post('/scrape', async (req, res) => {
   }
 });
 
-app.post('/watch', (req, res) => {
-  const { url, roomId, roomName, hotelName, persons, sessionId, interval, checkin, checkout } = req.body;
+function createWatcher({ url, roomId, roomName, hotelName, persons, sessionId, interval, checkin, checkout }) {
   const id = uuidv4();
 
   const watcher = { id, url, roomId, roomName, hotelName, persons, sessionId, interval: interval || 5, checkin: checkin || null, checkout: checkout || null, wasAvailable: false, lastCheck: null, lastData: null, createdAt: new Date().toISOString() };
@@ -430,25 +513,28 @@ app.post('/watch', (req, res) => {
 
   saveData();
 
-  // Notif de confirmation immédiate
-  const sub = pushSubscriptions.get(sessionId);
-  if (sub) {
-    const nights = (checkin && checkout) ? Math.round((new Date(checkout) - new Date(checkin)) / 86400000) : null;
-    const datesStr = nights ? ` · ${checkin} → ${checkout} (${nights} nuit${nights > 1 ? 's' : ''})` : '';
-    webpush.sendNotification(sub, JSON.stringify({
-      title: '✅ Surveillance activée — ' + hotelName,
-      body: `On vous recontacte dès que "${roomName}" se libère${datesStr}.`,
-      url: url
-    })).catch(() => {});
-  }
-  {
-    const nights = (checkin && checkout) ? Math.round((new Date(checkout) - new Date(checkin)) / 86400000) : null;
-    const datesStr = nights ? ` · ${checkin} → ${checkout} (${nights} nuit${nights > 1 ? 's' : ''})` : '';
-    sendTelegram(`✅ <b>Surveillance activée</b>\n${hotelName}\nOn vous recontacte dès que "${roomName}" se libère${datesStr}.`);
-  }
+  const nights = (checkin && checkout) ? Math.round((new Date(checkout) - new Date(checkin)) / 86400000) : null;
+  const datesStr = nights ? ` · ${checkin} → ${checkout} (${nights} nuit${nights > 1 ? 's' : ''})` : '';
 
+  if (sessionId) {
+    const sub = pushSubscriptions.get(sessionId);
+    if (sub) {
+      webpush.sendNotification(sub, JSON.stringify({
+        title: '✅ Surveillance activée — ' + hotelName,
+        body: `On vous recontacte dès que "${roomName}" se libère${datesStr}.`,
+        url: url
+      })).catch(() => {});
+    }
+  }
+  sendTelegram(`✅ <b>Surveillance activée</b>\n${hotelName}\nOn vous recontacte dès que "${roomName}" se libère${datesStr}.`);
+
+  return watcher;
+}
+
+app.post('/watch', (req, res) => {
+  const watcher = createWatcher(req.body);
   const { job: _, ...watcherData } = watcher;
-  res.json({ watcherId: id, watcher: watcherData });
+  res.json({ watcherId: watcher.id, watcher: watcherData });
 });
 
 app.delete('/watch/:id', (req, res) => {
