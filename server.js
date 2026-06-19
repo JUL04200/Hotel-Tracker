@@ -618,7 +618,21 @@ async function pollTelegram() {
     setTimeout(pollTelegram, 1000);
   }
 }
-if (TELEGRAM_BOT_TOKEN) pollTelegram();
+
+async function skipTelegramBacklog() {
+  // Au démarrage, on ignore tout l'historique des messages pour ne pas rejouer les vieilles commandes
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=-1`);
+    const data = await r.json();
+    if (data.ok && data.result.length) {
+      telegramOffset = data.result[data.result.length - 1].update_id;
+    }
+  } catch (e) {
+    console.error('[TELEGRAM] Erreur skip backlog:', e.message);
+  }
+}
+
+if (TELEGRAM_BOT_TOKEN) skipTelegramBacklog().then(pollTelegram);
 
 app.get('/vapid-public-key', (req, res) => {
   res.json({ publicKey: VAPID_KEYS.publicKey });
