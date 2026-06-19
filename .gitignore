@@ -4,3 +4,5 @@ server.log
 server-err.log
 ngrok.log
 ngrok-err.log
+data.json
+vapid.json
