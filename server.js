@@ -493,6 +493,28 @@ async function telegramReply(chatId, text) {
   }
 }
 
+function parseDate(text) {
+  // Accepte JJ-MM-AAAA, JJ/MM/AAAA ou AAAA-MM-JJ
+  let m = text.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  m = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  return null;
+}
+
+function clearWatchersForChat() {
+  let count = 0;
+  for (const [id, w] of watchers) {
+    if (w.sessionId === null || w.sessionId === undefined) {
+      if (w.job) { try { w.job.stop(); } catch(e) {} }
+      watchers.delete(id);
+      count++;
+    }
+  }
+  saveData();
+  return count;
+}
+
 async function handleTelegramMessage(msg) {
   const chatId = String(msg.chat.id);
   if (TELEGRAM_CHAT_ID && chatId !== String(TELEGRAM_CHAT_ID)) return; // ignore les autres
@@ -503,6 +525,12 @@ async function handleTelegramMessage(msg) {
     return telegramReply(chatId, 'Salut ! Envoie-moi un lien Booking.com ou Hotels.com pour démarrer une surveillance.');
   }
 
+  if (text === '/reset') {
+    telegramPending.delete(chatId);
+    const count = clearWatchersForChat();
+    return telegramReply(chatId, `🗑️ Historique effacé (${count} surveillance${count > 1 ? 's' : ''} supprimée${count > 1 ? 's' : ''}).`);
+  }
+
   if (/^https?:\/\//i.test(text)) {
     await telegramReply(chatId, '🔍 Analyse de l\'hôtel en cours...');
     try {
@@ -510,7 +538,7 @@ async function handleTelegramMessage(msg) {
       if (!data.rooms.length) {
         return telegramReply(chatId, `⚠️ Aucune chambre trouvée pour ${data.name || 'cet hôtel'}. Vérifie le lien manuellement.`);
       }
-      telegramPending.set(chatId, { data, url: text });
+      telegramPending.set(chatId, { step: 'room', data, url: text });
       const list = data.rooms.map((r, i) => `${i + 1}. ${r.name} — ${r.price} (max ${r.maxPersons} pers.)`).join('\n');
       return telegramReply(chatId, `🏨 <b>${data.name || 'Hôtel'}</b>\n\n${list}\n\nRéponds avec le numéro de la chambre à surveiller.`);
     } catch (e) {
@@ -518,23 +546,48 @@ async function handleTelegramMessage(msg) {
     }
   }
 
-  const num = parseInt(text, 10);
-  if (!isNaN(num)) {
-    const pending = telegramPending.get(chatId);
-    if (!pending) return telegramReply(chatId, 'Envoie d\'abord un lien d\'hôtel.');
-    const room = pending.data.rooms[num - 1];
+  const pending = telegramPending.get(chatId);
+  if (!pending) return telegramReply(chatId, 'Envoie d\'abord un lien d\'hôtel.');
+
+  if (pending.step === 'room') {
+    const num = parseInt(text, 10);
+    const room = !isNaN(num) ? pending.data.rooms[num - 1] : null;
     if (!room) return telegramReply(chatId, 'Numéro invalide, réessaie.');
+    pending.room = room;
+    pending.step = 'checkin';
+    return telegramReply(chatId, '📅 Quelle est la date d\'arrivée ? (format JJ-MM-AAAA)');
+  }
+
+  if (pending.step === 'checkin') {
+    const date = parseDate(text);
+    if (!date) return telegramReply(chatId, 'Format invalide. Envoie la date au format JJ-MM-AAAA.');
+    pending.checkin = date;
+    pending.step = 'checkout';
+    return telegramReply(chatId, '📅 Et la date de départ ? (format JJ-MM-AAAA)');
+  }
+
+  if (pending.step === 'checkout') {
+    const date = parseDate(text);
+    if (!date) return telegramReply(chatId, 'Format invalide. Envoie la date au format JJ-MM-AAAA.');
+    pending.checkout = date;
+    pending.step = 'persons';
+    return telegramReply(chatId, '👥 Combien de personnes ?');
+  }
+
+  if (pending.step === 'persons') {
+    const persons = parseInt(text, 10);
+    if (isNaN(persons) || persons < 1) return telegramReply(chatId, 'Envoie juste un nombre, ex: 2');
 
     createWatcher({
       url: pending.url,
-      roomId: room.id,
-      roomName: room.name,
+      roomId: pending.room.id,
+      roomName: pending.room.name,
       hotelName: pending.data.name,
-      persons: 2,
+      persons,
       sessionId: null,
       interval: 5,
-      checkin: null,
-      checkout: null
+      checkin: pending.checkin,
+      checkout: pending.checkout
     });
     telegramPending.delete(chatId);
     return; // createWatcher envoie déjà la confirmation Telegram
