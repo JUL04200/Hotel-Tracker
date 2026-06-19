@@ -430,7 +430,7 @@ async function checkAvailability(watcherId) {
       const isBlocked = !data.name;
       const lastErrKey = isBlocked ? `blocked_${watcherId}` : `full_${watcherId}`;
       const lastErr = watcher[lastErrKey] || 0;
-      if (Date.now() - lastErr > 3600000) {
+      if (Date.now() - lastErr > 86400000) {
         watcher[lastErrKey] = Date.now();
         const sub = pushSubscriptions.get(watcher.sessionId);
 
@@ -443,11 +443,11 @@ async function checkAvailability(watcherId) {
           sendTelegram(`⛔ <b>Booking bloque la vérification</b>\nImpossible de lire la page de ${watcher.hotelName}. Vérifie manuellement.\n${watcher.url}`);
         } else {
           if (sub) webpush.sendNotification(sub, JSON.stringify({
-            title: '😴 Toujours complet cette heure',
-            body: `${watcher.hotelName} n'a montré aucune chambre dispo durant la dernière heure. La surveillance continue.`,
+            title: '😴 Toujours complet aujourd\'hui',
+            body: `${watcher.hotelName} n'a montré aucune chambre dispo depuis le dernier rappel. La surveillance continue.`,
             url: watcher.url
           })).catch(() => {});
-          sendTelegram(`😴 <b>Toujours complet cette heure</b>\n${watcher.hotelName} n'a montré aucune chambre dispo durant la dernière heure. La surveillance continue.\n${watcher.url}`);
+          sendTelegram(`😴 <b>Toujours complet aujourd'hui</b>\n${watcher.hotelName} n'a montré aucune chambre dispo depuis le dernier rappel. La surveillance continue.\n${watcher.url}`);
         }
       }
     }
