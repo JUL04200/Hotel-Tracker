@@ -33,6 +33,22 @@ const watchers = new Map();
 const pushSubscriptions = new Map();
 const hotelCache = new Map();
 
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+async function sendTelegram(text) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' })
+    });
+  } catch (e) {
+    console.error('[TELEGRAM] Erreur envoi:', e.message);
+  }
+}
+
 function saveData() {
   const data = {
     watchers: [],
@@ -98,7 +114,7 @@ function buildBookingUrl(url, checkin, checkout, persons) {
 async function scrapeHotel(url, checkin, checkout, persons) {
   const isCloud = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RENDER || !process.env.LOCALAPPDATA;
   const browser = await puppeteer.launch({
-    headless: 'new',
+    headless: isCloud ? false : 'new',
     executablePath: isCloud
       ? (process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable')
       : 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
@@ -324,6 +340,7 @@ async function checkAvailability(watcherId) {
           body: `Impossible de lire les chambres de ${watcher.hotelName}. Booking a peut-être changé. Vérifie manuellement.`,
           url: watcher.url
         })).catch(() => {});
+        sendTelegram(`⚠️ <b>Problème de vérification</b>\nImpossible de lire les chambres de ${watcher.hotelName}. Vérifie manuellement.\n${watcher.url}`);
       }
     }
 
@@ -349,6 +366,7 @@ async function checkAvailability(watcherId) {
         body: `${watcher.hotelName} — ${e.message.slice(0, 80)}`,
         url: watcher.url
       })).catch(() => {});
+      sendTelegram(`❌ <b>Erreur de vérification</b>\n${watcher.hotelName} — ${e.message.slice(0, 120)}\n${watcher.url}`);
     }
   }
 }
@@ -369,6 +387,7 @@ async function sendNotification(watcher, room) {
   } catch (e) {
     console.error('Push failed:', e.message);
   }
+  sendTelegram(`🎉 <b>Chambre disponible !</b>\n${watcher.hotelName}\n${room.name} — ${room.price}\n${watcher.url}`);
 }
 
 app.get('/vapid-public-key', (req, res) => {
@@ -421,6 +440,11 @@ app.post('/watch', (req, res) => {
       body: `On vous recontacte dès que "${roomName}" se libère${datesStr}.`,
       url: url
     })).catch(() => {});
+  }
+  {
+    const nights = (checkin && checkout) ? Math.round((new Date(checkout) - new Date(checkin)) / 86400000) : null;
+    const datesStr = nights ? ` · ${checkin} → ${checkout} (${nights} nuit${nights > 1 ? 's' : ''})` : '';
+    sendTelegram(`✅ <b>Surveillance activée</b>\n${hotelName}\nOn vous recontacte dès que "${roomName}" se libère${datesStr}.`);
   }
 
   const { job: _, ...watcherData } = watcher;
