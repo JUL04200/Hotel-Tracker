@@ -430,7 +430,8 @@ async function checkAvailability(watcherId) {
       const isBlocked = !data.name;
       const lastErrKey = isBlocked ? `blocked_${watcherId}` : `full_${watcherId}`;
       const lastErr = watcher[lastErrKey] || 0;
-      if (Date.now() - lastErr > 86400000) {
+      const cooldown = isBlocked ? 3600000 : 86400000; // bloqué = 1x/heure, complet = 1x/jour
+      if (Date.now() - lastErr > cooldown) {
         watcher[lastErrKey] = Date.now();
         const sub = pushSubscriptions.get(watcher.sessionId);
 
