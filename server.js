@@ -14,8 +14,10 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const DATA_FILE = path.join(__dirname, 'data.json');
-const VAPID_FILE = path.join(__dirname, 'vapid.json');
+// DATA_DIR pointe vers le volume persistant Railway s'il existe, sinon le dossier local
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const DATA_FILE = path.join(DATA_DIR, 'data.json');
+const VAPID_FILE = path.join(DATA_DIR, 'vapid.json');
 
 // VAPID keys — priorité aux variables d'env Railway, sinon fichier local
 let VAPID_KEYS;
