@@ -417,18 +417,29 @@ async function checkAvailability(watcherId) {
     const targetRoom = data.rooms.find(r => r.id === watcher.roomId || r.name === watcher.roomName);
 
     if (!data.rooms.length) {
-      // Scraper a rien trouvé — notif d'erreur (max 1 fois par heure)
-      const lastErrKey = `err_${watcherId}`;
+      // Distingue un vrai blocage (page illisible, nom d'hôtel introuvable) d'un simple "complet"
+      const isBlocked = !data.name;
+      const lastErrKey = isBlocked ? `blocked_${watcherId}` : `full_${watcherId}`;
       const lastErr = watcher[lastErrKey] || 0;
       if (Date.now() - lastErr > 3600000) {
         watcher[lastErrKey] = Date.now();
         const sub = pushSubscriptions.get(watcher.sessionId);
-        if (sub) webpush.sendNotification(sub, JSON.stringify({
-          title: '😴 Toujours complet',
-          body: `${watcher.hotelName} semble complet à ces dates (ou Booking a changé sa page). Vérifie manuellement si tu as un doute.`,
-          url: watcher.url
-        })).catch(() => {});
-        sendTelegram(`😴 <b>Toujours complet</b>\n${watcher.hotelName} ne montre aucune chambre dispo à ces dates pour l'instant. Ça peut vouloir dire que c'est vraiment complet, ou plus rarement que Booking a changé sa page — vérifie manuellement si tu as un doute.\n${watcher.url}`);
+
+        if (isBlocked) {
+          if (sub) webpush.sendNotification(sub, JSON.stringify({
+            title: '⛔ Booking bloque la vérification',
+            body: `Impossible de lire la page de ${watcher.hotelName}. Booking bloque peut-être le robot. Vérifie manuellement.`,
+            url: watcher.url
+          })).catch(() => {});
+          sendTelegram(`⛔ <b>Booking bloque la vérification</b>\nImpossible de lire la page de ${watcher.hotelName}. Vérifie manuellement.\n${watcher.url}`);
+        } else {
+          if (sub) webpush.sendNotification(sub, JSON.stringify({
+            title: '😴 Toujours complet cette heure',
+            body: `${watcher.hotelName} n'a montré aucune chambre dispo durant la dernière heure. La surveillance continue.`,
+            url: watcher.url
+          })).catch(() => {});
+          sendTelegram(`😴 <b>Toujours complet cette heure</b>\n${watcher.hotelName} n'a montré aucune chambre dispo durant la dernière heure. La surveillance continue.\n${watcher.url}`);
+        }
       }
     }
 
