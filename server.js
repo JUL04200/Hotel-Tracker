@@ -532,31 +532,12 @@ async function handleTelegramMessage(msg) {
   }
 
   if (/^https?:\/\//i.test(text)) {
-    await telegramReply(chatId, '🔍 Analyse de l\'hôtel en cours...');
-    try {
-      const data = await scrapeHotel(text, null, null, 2);
-      if (!data.rooms.length) {
-        return telegramReply(chatId, `⚠️ Aucune chambre trouvée pour ${data.name || 'cet hôtel'}. Vérifie le lien manuellement.`);
-      }
-      telegramPending.set(chatId, { step: 'room', data, url: text });
-      const list = data.rooms.map((r, i) => `${i + 1}. ${r.name} — ${r.price} (max ${r.maxPersons} pers.)`).join('\n');
-      return telegramReply(chatId, `🏨 <b>${data.name || 'Hôtel'}</b>\n\n${list}\n\nRéponds avec le numéro de la chambre à surveiller.`);
-    } catch (e) {
-      return telegramReply(chatId, `❌ Erreur : ${e.message}`);
-    }
+    telegramPending.set(chatId, { step: 'checkin', url: text });
+    return telegramReply(chatId, '📅 Quelle est la date d\'arrivée ? (format JJ-MM-AAAA)');
   }
 
   const pending = telegramPending.get(chatId);
   if (!pending) return telegramReply(chatId, 'Envoie d\'abord un lien d\'hôtel.');
-
-  if (pending.step === 'room') {
-    const num = parseInt(text, 10);
-    const room = !isNaN(num) ? pending.data.rooms[num - 1] : null;
-    if (!room) return telegramReply(chatId, 'Numéro invalide, réessaie.');
-    pending.room = room;
-    pending.step = 'checkin';
-    return telegramReply(chatId, '📅 Quelle est la date d\'arrivée ? (format JJ-MM-AAAA)');
-  }
 
   if (pending.step === 'checkin') {
     const date = parseDate(text);
@@ -577,13 +558,36 @@ async function handleTelegramMessage(msg) {
   if (pending.step === 'persons') {
     const persons = parseInt(text, 10);
     if (isNaN(persons) || persons < 1) return telegramReply(chatId, 'Envoie juste un nombre, ex: 2');
+    pending.persons = persons;
+
+    await telegramReply(chatId, '🔍 Analyse de l\'hôtel en cours...');
+    try {
+      const data = await scrapeHotel(pending.url, pending.checkin, pending.checkout, persons);
+      if (!data.rooms.length) {
+        telegramPending.delete(chatId);
+        return telegramReply(chatId, `⚠️ Aucune chambre trouvée pour ${data.name || 'cet hôtel'} à ces dates. Vérifie le lien manuellement.`);
+      }
+      pending.data = data;
+      pending.step = 'room';
+      const list = data.rooms.map((r, i) => `${i + 1}. ${r.name} — ${r.price} (max ${r.maxPersons} pers.)`).join('\n');
+      return telegramReply(chatId, `🏨 <b>${data.name || 'Hôtel'}</b>\n\n${list}\n\nRéponds avec le numéro de la chambre à surveiller.`);
+    } catch (e) {
+      telegramPending.delete(chatId);
+      return telegramReply(chatId, `❌ Erreur : ${e.message}`);
+    }
+  }
+
+  if (pending.step === 'room') {
+    const num = parseInt(text, 10);
+    const room = !isNaN(num) ? pending.data.rooms[num - 1] : null;
+    if (!room) return telegramReply(chatId, 'Numéro invalide, réessaie.');
 
     createWatcher({
       url: pending.url,
-      roomId: pending.room.id,
-      roomName: pending.room.name,
+      roomId: room.id,
+      roomName: room.name,
       hotelName: pending.data.name,
-      persons,
+      persons: pending.persons,
       sessionId: null,
       interval: 5,
       checkin: pending.checkin,
