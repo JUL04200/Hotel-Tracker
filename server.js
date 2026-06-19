@@ -424,11 +424,11 @@ async function checkAvailability(watcherId) {
         watcher[lastErrKey] = Date.now();
         const sub = pushSubscriptions.get(watcher.sessionId);
         if (sub) webpush.sendNotification(sub, JSON.stringify({
-          title: '⚠️ Problème de vérification',
-          body: `Impossible de lire les chambres de ${watcher.hotelName}. Booking a peut-être changé. Vérifie manuellement.`,
+          title: '😴 Toujours complet',
+          body: `${watcher.hotelName} semble complet à ces dates (ou Booking a changé sa page). Vérifie manuellement si tu as un doute.`,
           url: watcher.url
         })).catch(() => {});
-        sendTelegram(`⚠️ <b>Problème de vérification</b>\nImpossible de lire les chambres de ${watcher.hotelName}. Vérifie manuellement.\n${watcher.url}`);
+        sendTelegram(`😴 <b>Toujours complet</b>\n${watcher.hotelName} ne montre aucune chambre dispo à ces dates pour l'instant. Ça peut vouloir dire que c'est vraiment complet, ou plus rarement que Booking a changé sa page — vérifie manuellement si tu as un doute.\n${watcher.url}`);
       }
     }
 
