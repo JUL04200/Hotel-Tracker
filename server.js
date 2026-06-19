@@ -481,7 +481,6 @@ async function checkAvailability(watcherId) {
 
 async function sendNotification(watcher, room) {
   const sub = pushSubscriptions.get(watcher.sessionId);
-  if (!sub) return;
 
   const payload = JSON.stringify({
     title: `Chambre disponible ! ${watcher.hotelName}`,
@@ -491,7 +490,7 @@ async function sendNotification(watcher, room) {
   });
 
   try {
-    await webpush.sendNotification(sub, payload);
+    if (sub) await webpush.sendNotification(sub, payload);
   } catch (e) {
     console.error('Push failed:', e.message);
   }
