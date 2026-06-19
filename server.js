@@ -111,8 +111,61 @@ function buildBookingUrl(url, checkin, checkout, persons) {
   } catch(e) { return url; }
 }
 
+const rand = (min, max) => min + Math.random() * (max - min);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+];
+
+// Déplace la souris vers une position en plusieurs petites étapes pour imiter un vrai geste humain
+async function humanMouseMove(page, x, y) {
+  const steps = Math.floor(rand(15, 35));
+  await page.mouse.move(x, y, { steps });
+}
+
+// Scroll progressif avec pauses irrégulières, comme une personne qui lit la page
+async function humanScroll(page, totalSteps = 6) {
+  for (let i = 1; i <= totalSteps; i++) {
+    const frac = i / totalSteps;
+    await page.evaluate(p => {
+      try { window.scrollTo({ top: document.body.scrollHeight * p, behavior: 'smooth' }); } catch(e) {}
+    }, frac);
+    await sleep(rand(600, 1800));
+    // petit mouvement de souris pendant la lecture
+    await humanMouseMove(page, rand(200, 900), rand(150, 600));
+  }
+}
+
+async function dismissCookieBanner(page) {
+  const selectors = [
+    '#onetrust-accept-btn-handler',
+    'button[id*="accept"]',
+    'button[data-testid="cookie-banner-accept-button"]',
+    'button[aria-label*="Accept" i]',
+    'button[aria-label*="Tout accepter" i]',
+  ];
+  for (const sel of selectors) {
+    try {
+      const btn = await page.$(sel);
+      if (btn) {
+        const box = await btn.boundingBox();
+        if (box) await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2);
+        await sleep(rand(200, 500));
+        await btn.click().catch(() => {});
+        await sleep(rand(500, 1000));
+        return;
+      }
+    } catch(e) {}
+  }
+}
+
 async function scrapeHotel(url, checkin, checkout, persons) {
   const isCloud = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RENDER || !process.env.LOCALAPPDATA;
+  const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
   const browser = await puppeteer.launch({
     headless: isCloud ? false : 'new',
     executablePath: isCloud
@@ -126,46 +179,82 @@ async function scrapeHotel(url, checkin, checkout, persons) {
       '--disable-infobars',
       '--window-size=1366,768',
       '--disable-extensions',
-      '--disable-gpu',
       '--lang=fr-FR',
+      '--start-maximized',
     ],
   });
 
   try {
     const page = await browser.newPage();
 
-    // Désactive les flags qui trahissent un headless browser
+    // Désactive/maquille les empreintes qui trahissent un navigateur automatisé
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-      Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [
+          { name: 'Chrome PDF Plugin' }, { name: 'Chrome PDF Viewer' }, { name: 'Native Client' }
+        ]
+      });
       Object.defineProperty(navigator, 'languages', { get: () => ['fr-FR', 'fr', 'en-US', 'en'] });
-      window.chrome = { runtime: {} };
+      Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+      Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+      window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {} };
+
+      const getParameter = WebGLRenderingContext.prototype.getParameter;
+      WebGLRenderingContext.prototype.getParameter = function(param) {
+        if (param === 37445) return 'Intel Inc.';
+        if (param === 37446) return 'Intel Iris OpenGL Engine';
+        return getParameter.call(this, param);
+      };
+
+      const originalQuery = window.navigator.permissions.query;
+      window.navigator.permissions.query = (params) =>
+        params.name === 'notifications'
+          ? Promise.resolve({ state: Notification.permission })
+          : originalQuery(params);
     });
 
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+    await page.setUserAgent(userAgent);
     await page.setViewport({ width: 1366, height: 768 });
     await page.setExtraHTTPHeaders({
       'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-      'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+      'sec-ch-ua': '"Chromium";v="125", "Google Chrome";v="125", "Not-A.Brand";v="99"',
       'sec-ch-ua-mobile': '?0',
       'sec-ch-ua-platform': '"Windows"',
+      'Upgrade-Insecure-Requests': '1',
     });
 
     const isBooking = url.includes('booking.com');
     const isHotels = url.includes('hotels.com') || url.includes('expedia.com');
 
+    // Passe d'abord par Google pour avoir un referrer crédible, comme un vrai utilisateur
+    try {
+      await page.goto('https://www.google.com/', { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await sleep(rand(800, 1800));
+    } catch(e) {}
+
     const targetUrl = isBooking ? buildBookingUrl(url, checkin, checkout, persons) : url;
     console.log('[SCRAPE] URL:', targetUrl);
 
-    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.goto(targetUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000,
+      referer: 'https://www.google.com/',
+    });
 
-    // Simule un comportement humain : mouvement de souris + scroll progressif
-    await new Promise(r => setTimeout(r, 2000));
-    await page.mouse.move(300 + Math.random() * 200, 200 + Math.random() * 100);
-    await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
-    await page.mouse.move(400 + Math.random() * 200, 400 + Math.random() * 100);
-    await new Promise(r => setTimeout(r, 3000));
+    // Pause de lecture initiale, variable comme un humain qui arrive sur la page
+    await sleep(rand(2500, 5000));
+    await dismissCookieBanner(page);
+    await sleep(rand(500, 1200));
+
+    // Quelques mouvements de souris avant de scroller
+    await humanMouseMove(page, rand(200, 600), rand(150, 400));
+    await sleep(rand(400, 900));
+    await humanMouseMove(page, rand(400, 900), rand(300, 600));
+
+    await humanScroll(page, 6);
+    await sleep(rand(1500, 3000));
 
     let hotelData = { name: '', rooms: [], url };
 
@@ -224,12 +313,9 @@ async function scrapeBooking(page, url) {
     } catch(e) {}
   });
 
-  // Scroll pour déclencher les appels API
-  for (let i = 1; i <= 4; i++) {
-    await page.evaluate(p => { try { window.scrollTo(0, document.body.scrollHeight * p); } catch(e){} }, i * 0.25);
-    await new Promise(r => setTimeout(r, 1200));
-  }
-  await new Promise(r => setTimeout(r, 3000));
+  // Scroll humain supplémentaire pour déclencher les appels API restants
+  await humanScroll(page, 4);
+  await sleep(rand(1500, 2500));
 
   const hotelName = hotelNameFromApi || await page.evaluate(() => {
     for (const s of ['[data-testid="property-name"]', 'h2.pp-header__title', '.hp__hotel-name', 'h1']) {
