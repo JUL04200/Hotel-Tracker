@@ -58,9 +58,10 @@ function saveData() {
   };
   watchers.forEach(w => {
     data.watchers.push({
-      id: w.id, url: w.url, roomId: w.roomId, roomName: w.roomName,
+      id: w.id, type: w.type || 'hotel', url: w.url, roomId: w.roomId, roomName: w.roomName,
       hotelName: w.hotelName, persons: w.persons, sessionId: w.sessionId,
       interval: w.interval, checkin: w.checkin, checkout: w.checkout,
+      origin: w.origin, destination: w.destination, maxPrice: w.maxPrice,
       wasAvailable: w.wasAvailable, lastCheck: w.lastCheck, lastData: w.lastData,
       createdAt: w.createdAt
     });
@@ -83,7 +84,7 @@ function loadData() {
       watchers.set(w.id, w);
       const job = cron.schedule(`*/${Math.max(1, parseInt(w.interval) || 5)} * * * *`, () => checkAvailability(w.id));
       w.job = job;
-      console.log(`[RESTORE] Watcher restauré : ${w.hotelName} — ${w.roomName}`);
+      console.log(`[RESTORE] Watcher restauré : ${w.hotelName || (w.origin + ' → ' + w.destination)} — ${w.roomName || 'vol'}`);
     });
   } catch(e) {
     console.error('[LOAD] Erreur chargement data.json:', e.message);
@@ -412,9 +413,91 @@ function normalizeRoomName(s) {
   return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
+// --- Vols : suivi de prix (Google Flights) et suivi de dispo (lien compagnie précis) ---
+
+async function scrapeFlightPrice(origin, destination, dateStr) {
+  const isCloud = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RENDER || !process.env.LOCALAPPDATA;
+  const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+  const browser = await puppeteer.launch({
+    headless: isCloud ? false : 'new',
+    executablePath: isCloud
+      ? (process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable')
+      : 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage', '--lang=fr-FR'],
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    });
+    await page.setUserAgent(userAgent);
+    await page.setViewport({ width: 1366, height: 768 });
+
+    const query = `Vols vers ${destination} depuis ${origin} le ${dateStr}`;
+    const url = `https://www.google.com/travel/flights?q=${encodeURIComponent(query)}&hl=fr&curr=EUR`;
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await sleep(rand(4000, 7000));
+    await humanScroll(page, 4);
+    await sleep(rand(1500, 2500));
+
+    const prices = await page.evaluate(() => {
+      const text = document.body.innerText;
+      const matches = text.match(/(\d[\d\s]{1,5})\s?€/g) || [];
+      return matches.map(m => parseInt(m.replace(/[^\d]/g, ''), 10)).filter(n => n > 5 && n < 20000);
+    });
+
+    const minPrice = prices.length ? Math.min(...prices) : null;
+    return { minPrice, url, origin, destination, dateStr };
+  } finally {
+    await browser.close();
+  }
+}
+
+async function scrapeFlightAvailability(url) {
+  const isCloud = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RENDER || !process.env.LOCALAPPDATA;
+  const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+  const browser = await puppeteer.launch({
+    headless: isCloud ? false : 'new',
+    executablePath: isCloud
+      ? (process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable')
+      : 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage', '--lang=fr-FR'],
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    });
+    await page.setUserAgent(userAgent);
+    await page.setViewport({ width: 1366, height: 768 });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await sleep(rand(3000, 5000));
+    await dismissCookieBanner(page);
+    await humanScroll(page, 4);
+    await sleep(rand(1000, 2000));
+
+    const { title, bodyText } = await page.evaluate(() => ({
+      title: document.title,
+      bodyText: document.body.innerText.toLowerCase()
+    }));
+
+    const soldOutPhrases = ['complet', 'sold out', 'indisponible', 'non disponible', 'plus de billets', 'plus de places', 'unavailable', 'no longer available'];
+    const isSoldOut = soldOutPhrases.some(p => bodyText.includes(p));
+
+    return { name: title, available: !isSoldOut, url };
+  } finally {
+    await browser.close();
+  }
+}
+
 async function checkAvailability(watcherId) {
   const watcher = watchers.get(watcherId);
   if (!watcher) return;
+
+  if (watcher.type === 'flight_price') return checkFlightPrice(watcher);
+  if (watcher.type === 'flight_availability') return checkFlightAvailability(watcher);
 
   try {
     const data = await scrapeHotel(watcher.url, watcher.checkin, watcher.checkout, watcher.persons);
@@ -471,6 +554,78 @@ async function checkAvailability(watcherId) {
         url: watcher.url
       })).catch(() => {});
       sendTelegram(`❌ <b>Erreur de vérification</b>\n${watcher.hotelName} — ${e.message.slice(0, 120)}\n${watcher.url}`);
+    }
+  }
+}
+
+async function checkFlightPrice(watcher) {
+  try {
+    const result = await scrapeFlightPrice(watcher.origin, watcher.destination, watcher.checkin);
+    watcher.lastCheck = new Date().toISOString();
+    watcher.lastData = result;
+
+    if (result.minPrice == null) {
+      watcher.currentlyFull = true; // pas de prix trouvé = page illisible
+      const lastErrKey = `blocked_${watcher.id}`;
+      const lastErr = watcher[lastErrKey] || 0;
+      if (Date.now() - lastErr > 3600000) {
+        watcher[lastErrKey] = Date.now();
+        sendTelegram(`⛔ <b>Impossible de lire les prix</b>\nVol ${watcher.origin} → ${watcher.destination} le ${watcher.checkin}. Vérifie manuellement.\n${result.url}`);
+      }
+      return;
+    }
+
+    watcher.currentlyFull = result.minPrice > watcher.maxPrice;
+
+    if (result.minPrice <= watcher.maxPrice && !watcher.wasAvailable) {
+      watcher.wasAvailable = true;
+      sendTelegram(`🎉 <b>Prix en baisse !</b>\nVol ${watcher.origin} → ${watcher.destination} le ${watcher.checkin}\nPrix trouvé : ${result.minPrice} € (seuil : ${watcher.maxPrice} €)\n${result.url}`);
+      const sub = pushSubscriptions.get(watcher.sessionId);
+      if (sub) webpush.sendNotification(sub, JSON.stringify({
+        title: '🎉 Prix en baisse !',
+        body: `Vol ${watcher.origin} → ${watcher.destination} : ${result.minPrice} € (seuil ${watcher.maxPrice} €)`,
+        url: result.url
+      })).catch(() => {});
+    } else if (result.minPrice > watcher.maxPrice) {
+      watcher.wasAvailable = false;
+    }
+  } catch (e) {
+    console.error('Flight price check failed for', watcher.id, e.message);
+    const lastErrKey = `err_${watcher.id}`;
+    const lastErr = watcher[lastErrKey] || 0;
+    if (Date.now() - lastErr > 3600000) {
+      watcher[lastErrKey] = Date.now();
+      sendTelegram(`❌ <b>Erreur de vérification du vol</b>\n${watcher.origin} → ${watcher.destination} — ${e.message.slice(0, 120)}`);
+    }
+  }
+}
+
+async function checkFlightAvailability(watcher) {
+  try {
+    const result = await scrapeFlightAvailability(watcher.url);
+    watcher.lastCheck = new Date().toISOString();
+    watcher.lastData = result;
+    watcher.currentlyFull = !result.available;
+
+    if (result.available && !watcher.wasAvailable) {
+      watcher.wasAvailable = true;
+      sendTelegram(`🎉 <b>Vol disponible !</b>\n${result.name}\n${result.url}`);
+      const sub = pushSubscriptions.get(watcher.sessionId);
+      if (sub) webpush.sendNotification(sub, JSON.stringify({
+        title: '🎉 Vol disponible !',
+        body: result.name,
+        url: result.url
+      })).catch(() => {});
+    } else if (!result.available) {
+      watcher.wasAvailable = false;
+    }
+  } catch (e) {
+    console.error('Flight availability check failed for', watcher.id, e.message);
+    const lastErrKey = `err_${watcher.id}`;
+    const lastErr = watcher[lastErrKey] || 0;
+    if (Date.now() - lastErr > 3600000) {
+      watcher[lastErrKey] = Date.now();
+      sendTelegram(`❌ <b>Erreur de vérification du vol</b>\n${watcher.url} — ${e.message.slice(0, 120)}`);
     }
   }
 }
@@ -537,13 +692,73 @@ async function handleTelegramMessage(msg) {
   if (!text) return;
 
   if (text === '/start') {
-    return telegramReply(chatId, 'Salut ! Envoie-moi un lien Booking.com ou Hotels.com pour démarrer une surveillance.');
+    return telegramReply(chatId, 'Salut ! Envoie-moi un lien Booking.com ou Hotels.com pour surveiller une chambre, ou tape /vol pour surveiller un vol.');
   }
 
   if (text === '/reset') {
     telegramPending.delete(chatId);
     const count = clearWatchersForChat();
     return telegramReply(chatId, `🗑️ Historique effacé (${count} surveillance${count > 1 ? 's' : ''} supprimée${count > 1 ? 's' : ''}).`);
+  }
+
+  if (text === '/vol') {
+    telegramPending.set(chatId, { step: 'flight_mode' });
+    return telegramReply(chatId, '✈️ Tu veux suivre quoi ?\n1. Un prix qui baisse (Google Flights)\n2. Une dispo sur un vol précis (lien d\'une compagnie)\n\nRéponds 1 ou 2.');
+  }
+
+  const pendingFlight = telegramPending.get(chatId);
+
+  if (pendingFlight && pendingFlight.step === 'flight_mode') {
+    if (text === '1') {
+      pendingFlight.step = 'flight_origin';
+      return telegramReply(chatId, '🛫 Ville ou aéroport de départ ?');
+    }
+    if (text === '2') {
+      pendingFlight.step = 'flight_url';
+      return telegramReply(chatId, '🔗 Envoie le lien du vol précis (site de la compagnie).');
+    }
+    return telegramReply(chatId, 'Réponds juste 1 ou 2.');
+  }
+
+  if (pendingFlight && pendingFlight.step === 'flight_origin') {
+    pendingFlight.origin = text;
+    pendingFlight.step = 'flight_destination';
+    return telegramReply(chatId, '🛬 Ville ou aéroport d\'arrivée ?');
+  }
+
+  if (pendingFlight && pendingFlight.step === 'flight_destination') {
+    pendingFlight.destination = text;
+    pendingFlight.step = 'flight_date';
+    return telegramReply(chatId, '📅 Quelle date de vol ? (format JJ-MM-AAAA)');
+  }
+
+  if (pendingFlight && pendingFlight.step === 'flight_date') {
+    const date = parseDate(text);
+    if (!date) return telegramReply(chatId, 'Format invalide. Envoie la date au format JJ-MM-AAAA.');
+    pendingFlight.checkin = date;
+    pendingFlight.step = 'flight_maxprice';
+    return telegramReply(chatId, '💶 Prix maximum en euros ? (on te prévient si ça descend sous ce seuil)');
+  }
+
+  if (pendingFlight && pendingFlight.step === 'flight_maxprice') {
+    const maxPrice = parseInt(text, 10);
+    if (isNaN(maxPrice) || maxPrice < 1) return telegramReply(chatId, 'Envoie juste un nombre, ex: 150');
+    createFlightPriceWatcher({
+      origin: pendingFlight.origin,
+      destination: pendingFlight.destination,
+      checkin: pendingFlight.checkin,
+      maxPrice,
+      interval: 30
+    });
+    telegramPending.delete(chatId);
+    return;
+  }
+
+  if (pendingFlight && pendingFlight.step === 'flight_url') {
+    if (!/^https?:\/\//i.test(text)) return telegramReply(chatId, 'Envoie un lien valide (commençant par http).');
+    createFlightAvailabilityWatcher({ url: text, interval: 10 });
+    telegramPending.delete(chatId);
+    return;
   }
 
   if (/^https?:\/\//i.test(text)) {
@@ -653,13 +868,15 @@ if (TELEGRAM_BOT_TOKEN) skipTelegramBacklog().then(pollTelegram);
 cron.schedule('30 12 * * *', () => {
   for (const watcher of watchers.values()) {
     if (!watcher.currentlyFull) continue;
+    const label = watcher.hotelName || `Vol ${watcher.origin} → ${watcher.destination}`;
+    const url = watcher.url || (watcher.lastData && watcher.lastData.url) || '';
     const sub = pushSubscriptions.get(watcher.sessionId);
     if (sub) webpush.sendNotification(sub, JSON.stringify({
       title: '😴 Toujours complet',
-      body: `${watcher.hotelName} n'a montré aucune chambre dispo. La surveillance continue.`,
-      url: watcher.url
+      body: `${label} n'a montré aucune dispo. La surveillance continue.`,
+      url
     })).catch(() => {});
-    sendTelegram(`😴 <b>Toujours complet</b>\n${watcher.hotelName} n'a montré aucune chambre dispo. La surveillance continue.\n${watcher.url}`);
+    sendTelegram(`😴 <b>Toujours complet</b>\n${label} n'a montré aucune dispo. La surveillance continue.\n${url}`);
   }
 }, { timezone: 'Europe/Paris' });
 
@@ -717,6 +934,36 @@ function createWatcher({ url, roomId, roomName, hotelName, persons, sessionId, i
   }
   sendTelegram(`✅ <b>Surveillance activée</b>\n${hotelName}\nOn vous recontacte dès que "${roomName}" se libère${datesStr}.`);
 
+  return watcher;
+}
+
+function createFlightPriceWatcher({ origin, destination, checkin, maxPrice, interval }) {
+  const id = uuidv4();
+  const watcher = {
+    id, type: 'flight_price', origin, destination, checkin, maxPrice,
+    sessionId: null, interval: interval || 30, wasAvailable: false,
+    lastCheck: null, lastData: null, createdAt: new Date().toISOString()
+  };
+  watchers.set(id, watcher);
+  const job = cron.schedule(`*/${Math.max(1, parseInt(watcher.interval) || 30)} * * * *`, () => checkAvailability(id));
+  watcher.job = job;
+  saveData();
+  sendTelegram(`✅ <b>Surveillance de prix activée</b>\nVol ${origin} → ${destination} le ${checkin}\nOn vous prévient si le prix descend sous ${maxPrice} €.`);
+  return watcher;
+}
+
+function createFlightAvailabilityWatcher({ url, interval }) {
+  const id = uuidv4();
+  const watcher = {
+    id, type: 'flight_availability', url,
+    sessionId: null, interval: interval || 10, wasAvailable: false,
+    lastCheck: null, lastData: null, createdAt: new Date().toISOString()
+  };
+  watchers.set(id, watcher);
+  const job = cron.schedule(`*/${Math.max(1, parseInt(watcher.interval) || 10)} * * * *`, () => checkAvailability(id));
+  watcher.job = job;
+  saveData();
+  sendTelegram(`✅ <b>Surveillance de vol activée</b>\nOn vous prévient dès qu'il y a une place dispo.\n${url}`);
   return watcher;
 }
 
