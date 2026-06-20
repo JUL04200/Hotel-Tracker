@@ -428,29 +428,24 @@ async function checkAvailability(watcherId) {
     if (!data.rooms.length) {
       // Distingue un vrai blocage (page illisible, nom d'hôtel introuvable) d'un simple "complet"
       const isBlocked = !data.name;
-      const lastErrKey = isBlocked ? `blocked_${watcherId}` : `full_${watcherId}`;
-      const lastErr = watcher[lastErrKey] || 0;
-      const cooldown = isBlocked ? 3600000 : 86400000; // bloqué = 1x/heure, complet = 1x/jour
-      if (Date.now() - lastErr > cooldown) {
-        watcher[lastErrKey] = Date.now();
-        const sub = pushSubscriptions.get(watcher.sessionId);
+      watcher.currentlyFull = !isBlocked; // utilisé par le rappel quotidien à heure fixe
 
-        if (isBlocked) {
+      if (isBlocked) {
+        const lastErrKey = `blocked_${watcherId}`;
+        const lastErr = watcher[lastErrKey] || 0;
+        if (Date.now() - lastErr > 3600000) { // 1x/heure
+          watcher[lastErrKey] = Date.now();
+          const sub = pushSubscriptions.get(watcher.sessionId);
           if (sub) webpush.sendNotification(sub, JSON.stringify({
             title: '⛔ Booking bloque la vérification',
             body: `Impossible de lire la page de ${watcher.hotelName}. Booking bloque peut-être le robot. Vérifie manuellement.`,
             url: watcher.url
           })).catch(() => {});
           sendTelegram(`⛔ <b>Booking bloque la vérification</b>\nImpossible de lire la page de ${watcher.hotelName}. Vérifie manuellement.\n${watcher.url}`);
-        } else {
-          if (sub) webpush.sendNotification(sub, JSON.stringify({
-            title: '😴 Toujours complet aujourd\'hui',
-            body: `${watcher.hotelName} n'a montré aucune chambre dispo depuis le dernier rappel. La surveillance continue.`,
-            url: watcher.url
-          })).catch(() => {});
-          sendTelegram(`😴 <b>Toujours complet aujourd'hui</b>\n${watcher.hotelName} n'a montré aucune chambre dispo depuis le dernier rappel. La surveillance continue.\n${watcher.url}`);
         }
       }
+    } else {
+      watcher.currentlyFull = false;
     }
 
     if (targetRoom && targetRoom.available && !watcher.wasAvailable) {
@@ -653,6 +648,20 @@ async function skipTelegramBacklog() {
 }
 
 if (TELEGRAM_BOT_TOKEN) skipTelegramBacklog().then(pollTelegram);
+
+// Rappel quotidien à heure fixe (12h30, heure de Paris) pour les watchers toujours complets
+cron.schedule('30 12 * * *', () => {
+  for (const watcher of watchers.values()) {
+    if (!watcher.currentlyFull) continue;
+    const sub = pushSubscriptions.get(watcher.sessionId);
+    if (sub) webpush.sendNotification(sub, JSON.stringify({
+      title: '😴 Toujours complet',
+      body: `${watcher.hotelName} n'a montré aucune chambre dispo. La surveillance continue.`,
+      url: watcher.url
+    })).catch(() => {});
+    sendTelegram(`😴 <b>Toujours complet</b>\n${watcher.hotelName} n'a montré aucune chambre dispo. La surveillance continue.\n${watcher.url}`);
+  }
+}, { timezone: 'Europe/Paris' });
 
 app.get('/vapid-public-key', (req, res) => {
   res.json({ publicKey: VAPID_KEYS.publicKey });
