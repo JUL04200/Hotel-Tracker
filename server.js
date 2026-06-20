@@ -61,7 +61,7 @@ function saveData() {
       id: w.id, type: w.type || 'hotel', url: w.url, roomId: w.roomId, roomName: w.roomName,
       hotelName: w.hotelName, persons: w.persons, sessionId: w.sessionId,
       interval: w.interval, checkin: w.checkin, checkout: w.checkout,
-      origin: w.origin, destination: w.destination, flightClass: w.flightClass, maxPrice: w.maxPrice,
+      origin: w.origin, destination: w.destination, flightClass: w.flightClass, maxPrice: w.maxPrice, tripType: w.tripType,
       wasAvailable: w.wasAvailable, lastCheck: w.lastCheck, lastData: w.lastData,
       createdAt: w.createdAt
     });
@@ -415,7 +415,7 @@ function normalizeRoomName(s) {
 
 // --- Vols : suivi de prix (Google Flights) et suivi de dispo (lien compagnie précis) ---
 
-async function scrapeFlightPrice(origin, destination, dateStr, flightClass) {
+async function scrapeFlightPrice(origin, destination, dateStr, flightClass, returnDateStr) {
   const isCloud = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RENDER || !process.env.LOCALAPPDATA;
   const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
   const browser = await puppeteer.launch({
@@ -434,7 +434,9 @@ async function scrapeFlightPrice(origin, destination, dateStr, flightClass) {
     await page.setUserAgent(userAgent);
     await page.setViewport({ width: 1366, height: 768 });
 
-    const query = `Vols vers ${destination} depuis ${origin} le ${dateStr} en classe ${flightClass || 'économique'}`;
+    const query = returnDateStr
+      ? `Vols vers ${destination} depuis ${origin} aller le ${dateStr} retour le ${returnDateStr} en classe ${flightClass || 'économique'}`
+      : `Vols vers ${destination} depuis ${origin} aller simple le ${dateStr} en classe ${flightClass || 'économique'}`;
     const url = `https://www.google.com/travel/flights?q=${encodeURIComponent(query)}&hl=fr&curr=EUR`;
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await sleep(rand(4000, 7000));
@@ -560,7 +562,7 @@ async function checkAvailability(watcherId) {
 
 async function checkFlightPrice(watcher) {
   try {
-    const result = await scrapeFlightPrice(watcher.origin, watcher.destination, watcher.checkin, watcher.flightClass);
+    const result = await scrapeFlightPrice(watcher.origin, watcher.destination, watcher.checkin, watcher.flightClass, watcher.checkout);
     watcher.lastCheck = new Date().toISOString();
     watcher.lastData = result;
 
@@ -741,14 +743,33 @@ async function handleTelegramMessage(msg) {
 
   if (pendingFlight && pendingFlight.step === 'flight_destination') {
     pendingFlight.destination = text;
+    pendingFlight.step = 'flight_triptype';
+    return telegramReply(chatId, '🔁 Aller simple ou aller-retour ?\n1. Aller simple\n2. Aller-retour\n\nRéponds 1 ou 2.');
+  }
+
+  if (pendingFlight && pendingFlight.step === 'flight_triptype') {
+    if (text !== '1' && text !== '2') return telegramReply(chatId, 'Réponds 1 ou 2.');
+    pendingFlight.tripType = text === '2' ? 'retour' : 'simple';
     pendingFlight.step = 'flight_date';
-    return telegramReply(chatId, '📅 Quelle date de vol ? (format JJ-MM-AAAA)');
+    return telegramReply(chatId, '📅 Quelle date de départ ? (format JJ-MM-AAAA)');
   }
 
   if (pendingFlight && pendingFlight.step === 'flight_date') {
     const date = parseDate(text);
     if (!date) return telegramReply(chatId, 'Format invalide. Envoie la date au format JJ-MM-AAAA.');
     pendingFlight.checkin = date;
+    if (pendingFlight.tripType === 'retour') {
+      pendingFlight.step = 'flight_returndate';
+      return telegramReply(chatId, '📅 Et la date de retour ? (format JJ-MM-AAAA)');
+    }
+    pendingFlight.step = 'flight_class';
+    return telegramReply(chatId, '💺 Quelle classe ?\n1. Économique\n2. Premium économique\n3. Affaires\n4. Première\n\nRéponds 1, 2, 3 ou 4.');
+  }
+
+  if (pendingFlight && pendingFlight.step === 'flight_returndate') {
+    const date = parseDate(text);
+    if (!date) return telegramReply(chatId, 'Format invalide. Envoie la date au format JJ-MM-AAAA.');
+    pendingFlight.checkout = date;
     pendingFlight.step = 'flight_class';
     return telegramReply(chatId, '💺 Quelle classe ?\n1. Économique\n2. Premium économique\n3. Affaires\n4. Première\n\nRéponds 1, 2, 3 ou 4.');
   }
@@ -768,6 +789,8 @@ async function handleTelegramMessage(msg) {
       origin: pendingFlight.origin,
       destination: pendingFlight.destination,
       checkin: pendingFlight.checkin,
+      checkout: pendingFlight.checkout || null,
+      tripType: pendingFlight.tripType,
       flightClass: pendingFlight.flightClass,
       maxPrice,
       interval: 30
@@ -959,10 +982,10 @@ function createWatcher({ url, roomId, roomName, hotelName, persons, sessionId, i
   return watcher;
 }
 
-function createFlightPriceWatcher({ origin, destination, checkin, flightClass, maxPrice, interval }) {
+function createFlightPriceWatcher({ origin, destination, checkin, checkout, tripType, flightClass, maxPrice, interval }) {
   const id = uuidv4();
   const watcher = {
-    id, type: 'flight_price', origin, destination, checkin, flightClass, maxPrice,
+    id, type: 'flight_price', origin, destination, checkin, checkout: checkout || null, tripType: tripType || 'simple', flightClass, maxPrice,
     sessionId: null, interval: interval || 30, wasAvailable: false,
     lastCheck: null, lastData: null, createdAt: new Date().toISOString()
   };
@@ -970,7 +993,8 @@ function createFlightPriceWatcher({ origin, destination, checkin, flightClass, m
   const job = cron.schedule(`*/${Math.max(1, parseInt(watcher.interval) || 30)} * * * *`, () => checkAvailability(id));
   watcher.job = job;
   saveData();
-  sendTelegram(`✅ <b>Surveillance de prix activée</b>\nVol ${origin} → ${destination} le ${checkin} (${flightClass})\nOn vous prévient si le prix descend sous ${maxPrice} €.`);
+  const datesStr = checkout ? `aller ${checkin} / retour ${checkout}` : `aller simple le ${checkin}`;
+  sendTelegram(`✅ <b>Surveillance de prix activée</b>\nVol ${origin} → ${destination}, ${datesStr} (${flightClass})\nOn vous prévient si le prix descend sous ${maxPrice} €.`);
   return watcher;
 }
 
