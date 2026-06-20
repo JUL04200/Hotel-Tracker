@@ -61,7 +61,7 @@ function saveData() {
       id: w.id, type: w.type || 'hotel', url: w.url, roomId: w.roomId, roomName: w.roomName,
       hotelName: w.hotelName, persons: w.persons, sessionId: w.sessionId,
       interval: w.interval, checkin: w.checkin, checkout: w.checkout,
-      origin: w.origin, destination: w.destination, maxPrice: w.maxPrice,
+      origin: w.origin, destination: w.destination, flightClass: w.flightClass, maxPrice: w.maxPrice,
       wasAvailable: w.wasAvailable, lastCheck: w.lastCheck, lastData: w.lastData,
       createdAt: w.createdAt
     });
@@ -415,7 +415,7 @@ function normalizeRoomName(s) {
 
 // --- Vols : suivi de prix (Google Flights) et suivi de dispo (lien compagnie précis) ---
 
-async function scrapeFlightPrice(origin, destination, dateStr) {
+async function scrapeFlightPrice(origin, destination, dateStr, flightClass) {
   const isCloud = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RENDER || !process.env.LOCALAPPDATA;
   const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
   const browser = await puppeteer.launch({
@@ -434,7 +434,7 @@ async function scrapeFlightPrice(origin, destination, dateStr) {
     await page.setUserAgent(userAgent);
     await page.setViewport({ width: 1366, height: 768 });
 
-    const query = `Vols vers ${destination} depuis ${origin} le ${dateStr}`;
+    const query = `Vols vers ${destination} depuis ${origin} le ${dateStr} en classe ${flightClass || 'économique'}`;
     const url = `https://www.google.com/travel/flights?q=${encodeURIComponent(query)}&hl=fr&curr=EUR`;
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await sleep(rand(4000, 7000));
@@ -560,7 +560,7 @@ async function checkAvailability(watcherId) {
 
 async function checkFlightPrice(watcher) {
   try {
-    const result = await scrapeFlightPrice(watcher.origin, watcher.destination, watcher.checkin);
+    const result = await scrapeFlightPrice(watcher.origin, watcher.destination, watcher.checkin, watcher.flightClass);
     watcher.lastCheck = new Date().toISOString();
     watcher.lastData = result;
 
@@ -741,6 +741,14 @@ async function handleTelegramMessage(msg) {
     const date = parseDate(text);
     if (!date) return telegramReply(chatId, 'Format invalide. Envoie la date au format JJ-MM-AAAA.');
     pendingFlight.checkin = date;
+    pendingFlight.step = 'flight_class';
+    return telegramReply(chatId, '💺 Quelle classe ?\n1. Économique\n2. Premium économique\n3. Affaires\n4. Première\n\nRéponds 1, 2, 3 ou 4.');
+  }
+
+  if (pendingFlight && pendingFlight.step === 'flight_class') {
+    const classes = { '1': 'Économique', '2': 'Premium économique', '3': 'Affaires', '4': 'Première' };
+    if (!classes[text]) return telegramReply(chatId, 'Réponds 1, 2, 3 ou 4.');
+    pendingFlight.flightClass = classes[text];
     pendingFlight.step = 'flight_maxprice';
     return telegramReply(chatId, '💶 Prix maximum en euros ? (on te prévient si ça descend sous ce seuil)');
   }
@@ -752,6 +760,7 @@ async function handleTelegramMessage(msg) {
       origin: pendingFlight.origin,
       destination: pendingFlight.destination,
       checkin: pendingFlight.checkin,
+      flightClass: pendingFlight.flightClass,
       maxPrice,
       interval: 30
     });
@@ -942,10 +951,10 @@ function createWatcher({ url, roomId, roomName, hotelName, persons, sessionId, i
   return watcher;
 }
 
-function createFlightPriceWatcher({ origin, destination, checkin, maxPrice, interval }) {
+function createFlightPriceWatcher({ origin, destination, checkin, flightClass, maxPrice, interval }) {
   const id = uuidv4();
   const watcher = {
-    id, type: 'flight_price', origin, destination, checkin, maxPrice,
+    id, type: 'flight_price', origin, destination, checkin, flightClass, maxPrice,
     sessionId: null, interval: interval || 30, wasAvailable: false,
     lastCheck: null, lastData: null, createdAt: new Date().toISOString()
   };
@@ -953,7 +962,7 @@ function createFlightPriceWatcher({ origin, destination, checkin, maxPrice, inte
   const job = cron.schedule(`*/${Math.max(1, parseInt(watcher.interval) || 30)} * * * *`, () => checkAvailability(id));
   watcher.job = job;
   saveData();
-  sendTelegram(`✅ <b>Surveillance de prix activée</b>\nVol ${origin} → ${destination} le ${checkin}\nOn vous prévient si le prix descend sous ${maxPrice} €.`);
+  sendTelegram(`✅ <b>Surveillance de prix activée</b>\nVol ${origin} → ${destination} le ${checkin} (${flightClass})\nOn vous prévient si le prix descend sous ${maxPrice} €.`);
   return watcher;
 }
 
