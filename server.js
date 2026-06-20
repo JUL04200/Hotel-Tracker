@@ -650,6 +650,7 @@ async function sendNotification(watcher, room) {
 
 // --- Bot Telegram : lien hôtel -> liste de chambres -> choix -> watcher ---
 const telegramPending = new Map(); // chatId -> { data, url }
+const telegramMode = new Map(); // chatId -> 'hotel' | 'vol', mis à jour par /hotel et /vol
 let telegramOffset = 0;
 
 async function telegramReply(chatId, text) {
@@ -674,9 +675,12 @@ function parseDate(text) {
   return null;
 }
 
-function clearWatchersForChat() {
+function clearWatchersForChat(mode) {
   let count = 0;
   for (const [id, w] of watchers) {
+    const isFlight = w.type === 'flight_price' || w.type === 'flight_availability';
+    const matchesMode = mode === 'vol' ? isFlight : !isFlight;
+    if (!matchesMode) continue;
     if (w.job) { try { w.job.stop(); } catch(e) {} }
     watchers.delete(id);
     count++;
@@ -697,16 +701,20 @@ async function handleTelegramMessage(msg) {
 
   if (text === '/reset') {
     telegramPending.delete(chatId);
-    const count = clearWatchersForChat();
-    return telegramReply(chatId, `🗑️ Historique effacé (${count} surveillance${count > 1 ? 's' : ''} supprimée${count > 1 ? 's' : ''}).`);
+    const mode = telegramMode.get(chatId) || 'hotel';
+    const count = clearWatchersForChat(mode);
+    const label = mode === 'vol' ? 'vol(s)' : 'hôtel(s)';
+    return telegramReply(chatId, `🗑️ Historique ${label} effacé (${count} surveillance${count > 1 ? 's' : ''} supprimée${count > 1 ? 's' : ''}).`);
   }
 
   if (text === '/vol') {
+    telegramMode.set(chatId, 'vol');
     telegramPending.set(chatId, { step: 'flight_mode' });
     return telegramReply(chatId, '✈️ Tu veux suivre quoi ?\n1. Un prix qui baisse (Google Flights)\n2. Une dispo sur un vol précis (lien d\'une compagnie)\n\nRéponds 1 ou 2.');
   }
 
   if (text === '/hotel') {
+    telegramMode.set(chatId, 'hotel');
     telegramPending.delete(chatId);
     return telegramReply(chatId, '🏨 Ok, envoie-moi maintenant un lien Booking.com ou Hotels.com.');
   }
