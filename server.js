@@ -706,6 +706,11 @@ async function handleTelegramMessage(msg) {
     return telegramReply(chatId, '✈️ Tu veux suivre quoi ?\n1. Un prix qui baisse (Google Flights)\n2. Une dispo sur un vol précis (lien d\'une compagnie)\n\nRéponds 1 ou 2.');
   }
 
+  if (text === '/hotel') {
+    telegramPending.delete(chatId);
+    return telegramReply(chatId, '🏨 Ok, envoie-moi maintenant un lien Booking.com ou Hotels.com.');
+  }
+
   const pendingFlight = telegramPending.get(chatId);
 
   if (pendingFlight && pendingFlight.step === 'flight_mode') {
