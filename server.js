@@ -114,6 +114,28 @@ function buildBookingUrl(url, checkin, checkout, persons) {
   } catch(e) { return url; }
 }
 
+// Pour les sites hôteliers directs : remplace les paramètres de dates connus dans l'URL si l'appelant en fournit
+function buildGenericUrl(url, checkin, checkout) {
+  if (!checkin || !checkout) return url;
+  try {
+    const u = new URL(url);
+    const pairs = [
+      ['checkin', 'checkout'],
+      ['arrival', 'departure'],
+      ['date_in', 'date_out'],
+      ['startDate', 'endDate'],
+      ['dateFrom', 'dateTo'],
+      ['from', 'to'],
+    ];
+    let changed = false;
+    pairs.forEach(([inKey, outKey]) => {
+      if (u.searchParams.has(inKey)) { u.searchParams.set(inKey, checkin); changed = true; }
+      if (u.searchParams.has(outKey)) { u.searchParams.set(outKey, checkout); changed = true; }
+    });
+    return changed ? u.toString() : url;
+  } catch(e) { return url; }
+}
+
 const rand = (min, max) => min + Math.random() * (max - min);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -237,7 +259,7 @@ async function scrapeHotel(url, checkin, checkout, persons) {
       await sleep(rand(800, 1800));
     } catch(e) {}
 
-    const targetUrl = isBooking ? buildBookingUrl(url, checkin, checkout, persons) : url;
+    const targetUrl = isBooking ? buildBookingUrl(url, checkin, checkout, persons) : buildGenericUrl(url, checkin, checkout);
     console.log('[SCRAPE] URL:', targetUrl);
 
     await page.goto(targetUrl, {
