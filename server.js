@@ -458,6 +458,9 @@ async function scrapeGeneric(page, url) {
     return { name: document.title.split(/[|\-–]/)[0].trim(), rooms };
   });
 
+  console.log('[GENERIC] Titre page:', data.name);
+  console.log('[GENERIC] Chambres trouvées:', data.rooms.length, JSON.stringify(data.rooms));
+
   return { name: data.name, rooms: data.rooms, url };
 }
 
