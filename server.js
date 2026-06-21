@@ -456,9 +456,21 @@ async function scrapeGeneric(page, url) {
       });
     });
 
+    // Filet de sécurité : si aucune chambre nommée trouvée, cherche un compteur "X typologie(s) de chambres"
+    let typologyCount = 0;
+    if (!rooms.length) {
+      const bodyText = document.body.innerText;
+      const m = bodyText.match(/(\d+)\s*typologies?\s*de\s*chambres?/i);
+      if (m) typologyCount = parseInt(m[1], 10) || 0;
+      if (typologyCount > 0) {
+        rooms.push({ name: 'Chambre disponible', price: 'Voir le site', maxPersons: 2, available: true, id: 'disponible' });
+      }
+    }
+
     return {
       name: document.title.split(/[|\-–]/)[0].trim(),
       rooms,
+      typologyCount,
       debugHeadingsCount: headings.length,
       debugDropped: droppedNoPrice.slice(0, 15),
       debugBodySnippet: document.body.innerText.slice(0, 500)
@@ -468,7 +480,7 @@ async function scrapeGeneric(page, url) {
   console.log('[GENERIC] Titre page:', data.name);
   console.log('[GENERIC] Chambres trouvées:', data.rooms.length, JSON.stringify(data.rooms));
   console.log('[GENERIC] Headings scannés:', data.debugHeadingsCount, '— rejetés sans prix:', JSON.stringify(data.debugDropped));
-  console.log('[GENERIC] Extrait du texte de la page:', data.debugBodySnippet);
+  if (data.typologyCount) console.log('[GENERIC] Filet de sécurité activé, typologies détectées:', data.typologyCount);
 
   return { name: data.name, rooms: data.rooms, url };
 }
