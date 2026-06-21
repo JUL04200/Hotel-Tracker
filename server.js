@@ -38,13 +38,14 @@ const hotelCache = new Map();
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-async function sendTelegram(text) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+async function sendTelegram(text, chatId) {
+  const target = chatId || TELEGRAM_CHAT_ID;
+  if (!TELEGRAM_BOT_TOKEN || !target) return;
   try {
     await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' })
+      body: JSON.stringify({ chat_id: target, text, parse_mode: 'HTML' })
     });
   } catch (e) {
     console.error('[TELEGRAM] Erreur envoi:', e.message);
@@ -59,7 +60,7 @@ function saveData() {
   watchers.forEach(w => {
     data.watchers.push({
       id: w.id, url: w.url, roomId: w.roomId, roomName: w.roomName,
-      hotelName: w.hotelName, persons: w.persons, sessionId: w.sessionId,
+      hotelName: w.hotelName, persons: w.persons, sessionId: w.sessionId, telegramChatId: w.telegramChatId,
       interval: w.interval, checkin: w.checkin, checkout: w.checkout,
       wasAvailable: w.wasAvailable, lastCheck: w.lastCheck, lastData: w.lastData,
       createdAt: w.createdAt
@@ -471,7 +472,7 @@ async function checkAvailability(watcherId) {
             body: `Impossible de lire la page de ${watcher.hotelName}. Booking bloque peut-être le robot. Vérifie manuellement.`,
             url: watcher.url
           })).catch(() => {});
-          sendTelegram(`⛔ <b>Booking bloque la vérification</b>\nImpossible de lire la page de ${watcher.hotelName}. Vérifie manuellement.\n${watcher.url}`);
+          sendTelegram(`⛔ <b>Booking bloque la vérification</b>\nImpossible de lire la page de ${watcher.hotelName}. Vérifie manuellement.\n${watcher.url}`, watcher.telegramChatId);
         }
       }
     } else {
@@ -500,7 +501,7 @@ async function checkAvailability(watcherId) {
         body: `${watcher.hotelName} — ${e.message.slice(0, 80)}`,
         url: watcher.url
       })).catch(() => {});
-      sendTelegram(`❌ <b>Erreur de vérification</b>\n${watcher.hotelName} — ${e.message.slice(0, 120)}\n${watcher.url}`);
+      sendTelegram(`❌ <b>Erreur de vérification</b>\n${watcher.hotelName} — ${e.message.slice(0, 120)}\n${watcher.url}`, watcher.telegramChatId);
     }
   }
 }
@@ -520,7 +521,7 @@ async function sendNotification(watcher, room) {
   } catch (e) {
     console.error('Push failed:', e.message);
   }
-  sendTelegram(`🎉 <b>Chambre disponible !</b>\n${watcher.hotelName}\n${room.name} — ${room.price}\n${watcher.url}`);
+  sendTelegram(`🎉 <b>Chambre disponible !</b>\n${watcher.hotelName}\n${room.name} — ${room.price}\n${watcher.url}`, watcher.telegramChatId);
 }
 
 // --- Bot Telegram : lien hôtel -> liste de chambres -> choix -> watcher ---
@@ -549,9 +550,12 @@ function parseDate(text) {
   return null;
 }
 
-function clearWatchersForChat() {
+function clearWatchersForChat(chatId) {
   let count = 0;
   for (const [id, w] of watchers) {
+    // watchers anciens sans telegramChatId : appartiennent au propriétaire historique (TELEGRAM_CHAT_ID)
+    const owner = w.telegramChatId || TELEGRAM_CHAT_ID;
+    if (owner !== chatId) continue; // ne touche pas aux watchers des autres
     if (w.job) { try { w.job.stop(); } catch(e) {} }
     watchers.delete(id);
     count++;
@@ -562,7 +566,6 @@ function clearWatchersForChat() {
 
 async function handleTelegramMessage(msg) {
   const chatId = String(msg.chat.id);
-  if (TELEGRAM_CHAT_ID && chatId !== String(TELEGRAM_CHAT_ID)) return; // ignore les autres
   const text = (msg.text || '').trim();
   if (!text) return;
 
@@ -572,7 +575,7 @@ async function handleTelegramMessage(msg) {
 
   if (text === '/reset') {
     telegramPending.delete(chatId);
-    const count = clearWatchersForChat();
+    const count = clearWatchersForChat(chatId);
     return telegramReply(chatId, `🗑️ Historique effacé (${count} surveillance${count > 1 ? 's' : ''} supprimée${count > 1 ? 's' : ''}).`);
   }
 
@@ -637,6 +640,7 @@ async function handleTelegramMessage(msg) {
       hotelName: pending.data.name,
       persons: pending.persons,
       sessionId: null,
+      telegramChatId: chatId,
       interval: 5,
       checkin: pending.checkin,
       checkout: pending.checkout
@@ -689,7 +693,7 @@ cron.schedule('30 12 * * *', () => {
       body: `${watcher.hotelName} n'a montré aucune chambre dispo. La surveillance continue.`,
       url: watcher.url
     })).catch(() => {});
-    sendTelegram(`😴 <b>Toujours complet</b>\n${watcher.hotelName} n'a montré aucune chambre dispo. La surveillance continue.\n${watcher.url}`);
+    sendTelegram(`😴 <b>Toujours complet</b>\n${watcher.hotelName} n'a montré aucune chambre dispo. La surveillance continue.\n${watcher.url}`, watcher.telegramChatId);
   }
 }, { timezone: 'Europe/Paris' });
 
@@ -721,10 +725,10 @@ app.post('/scrape', async (req, res) => {
   }
 });
 
-function createWatcher({ url, roomId, roomName, hotelName, persons, sessionId, interval, checkin, checkout }) {
+function createWatcher({ url, roomId, roomName, hotelName, persons, sessionId, telegramChatId, interval, checkin, checkout }) {
   const id = uuidv4();
 
-  const watcher = { id, url, roomId, roomName, hotelName, persons, sessionId, interval: interval || 5, checkin: checkin || null, checkout: checkout || null, wasAvailable: false, lastCheck: null, lastData: null, createdAt: new Date().toISOString() };
+  const watcher = { id, url, roomId, roomName, hotelName, persons, sessionId, telegramChatId: telegramChatId || null, interval: interval || 5, checkin: checkin || null, checkout: checkout || null, wasAvailable: false, lastCheck: null, lastData: null, createdAt: new Date().toISOString() };
   watchers.set(id, watcher);
 
   const job = cron.schedule(`*/${Math.max(1, parseInt(watcher.interval) || 5)} * * * *`, () => checkAvailability(id));
@@ -745,7 +749,7 @@ function createWatcher({ url, roomId, roomName, hotelName, persons, sessionId, i
       })).catch(() => {});
     }
   }
-  sendTelegram(`✅ <b>Surveillance activée</b>\n${hotelName}\nOn vous recontacte dès que "${roomName}" se libère${datesStr}.`);
+  sendTelegram(`✅ <b>Surveillance activée</b>\n${hotelName}\nOn vous recontacte dès que "${roomName}" se libère${datesStr}.`, telegramChatId);
 
   return watcher;
 }
