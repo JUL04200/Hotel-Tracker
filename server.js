@@ -436,7 +436,13 @@ async function scrapeHotelsCom(page, url) {
 }
 
 async function scrapeGeneric(page, url) {
-  const data = await page.evaluate(() => {
+  const data = await evaluateWithRetry(page);
+  return data ? finalizeGenericResult(data, url) : { name: '', rooms: [], url };
+}
+
+async function evaluateWithRetry(page, attempt = 1) {
+  try {
+    return await page.evaluate(() => {
     // Accepte le symbole avant OU après le nombre (£88.00 vs 88,00 €)
     const priceRegex = /(€|£|\$)\s?\d[\d\s.,]{0,8}|\d[\d\s.,]{0,8}\s?(€|£|\$|EUR|GBP|USD)/i;
     const soldOutWords = ['complet', 'sold out', 'indisponible', 'non disponible', 'épuisé', 'plus de chambre', 'unavailable'];
@@ -514,8 +520,18 @@ async function scrapeGeneric(page, url) {
     }
 
     return { name: document.title.split(/[|\-–]/)[0].trim(), rooms, typologyCount };
-  });
+    });
+  } catch (e) {
+    // Le site fait une navigation côté client après le chargement initial — on réessaie après une pause
+    if (attempt < 3 && /context was destroyed|navigation/i.test(e.message)) {
+      await sleep(rand(2000, 3000));
+      return evaluateWithRetry(page, attempt + 1);
+    }
+    throw e;
+  }
+}
 
+function finalizeGenericResult(data, url) {
   console.log('[GENERIC] Titre page:', data.name);
   console.log('[GENERIC] Chambres trouvées:', data.rooms.length, JSON.stringify(data.rooms));
   if (data.typologyCount) console.log('[GENERIC] Filet de sécurité activé, typologies détectées:', data.typologyCount);
