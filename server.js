@@ -400,12 +400,42 @@ async function scrapeHotelsCom(page, url) {
 }
 
 async function scrapeGeneric(page, url) {
-  const hotelName = await page.evaluate(() => document.title.split(/[|\-–]/)[0].trim());
-  return {
-    name: hotelName,
-    rooms: [{ name: 'Chambre Standard', price: 'Voir le site', maxPersons: 2, available: true, id: 'standard' }],
-    url
-  };
+  const data = await page.evaluate(() => {
+    const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+    const priceRegex = /(\d[\d\s.,]{1,8})\s?€/;
+    const soldOutWords = ['complet', 'sold out', 'indisponible', 'non disponible', 'épuisé', 'plus de chambre'];
+
+    const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, [class*="room"], [class*="chambre"]'));
+    const seen = new Set();
+    const rooms = [];
+
+    headings.forEach(h => {
+      const name = clean(h.textContent);
+      if (!name || name.length < 3 || name.length > 80 || seen.has(name)) return;
+
+      // Cherche un prix dans le bloc parent, jusqu'à 4 niveaux au-dessus
+      let container = h;
+      let priceText = null;
+      for (let i = 0; i < 4 && container; i++) {
+        const m = container.textContent.match(priceRegex);
+        if (m) { priceText = m[0]; break; }
+        container = container.parentElement;
+      }
+      if (!priceText) return; // pas de prix associé, probablement pas une chambre
+
+      seen.add(name);
+      const blockText = (container || h).textContent.toLowerCase();
+      const available = !soldOutWords.some(w => blockText.includes(w));
+      rooms.push({
+        name, price: priceText.trim(), maxPersons: 2, available,
+        id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      });
+    });
+
+    return { name: document.title.split(/[|\-–]/)[0].trim(), rooms };
+  });
+
+  return { name: data.name, rooms: data.rooms, url };
 }
 
 function normalizeRoomName(s) {
