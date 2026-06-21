@@ -424,62 +424,77 @@ async function scrapeHotelsCom(page, url) {
 
 async function scrapeGeneric(page, url) {
   const data = await page.evaluate(() => {
-    const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-    const priceRegex = /(\d[\d\s.,]{1,8})\s?€/;
-    const soldOutWords = ['complet', 'sold out', 'indisponible', 'non disponible', 'épuisé', 'plus de chambre'];
+    // Accepte le symbole avant OU après le nombre (£88.00 vs 88,00 €)
+    const priceRegex = /(€|£|\$)\s?\d[\d\s.,]{0,8}|\d[\d\s.,]{0,8}\s?(€|£|\$|EUR|GBP|USD)/i;
+    const soldOutWords = ['complet', 'sold out', 'indisponible', 'non disponible', 'épuisé', 'plus de chambre', 'unavailable'];
+    const blocklist = new Set([
+      'filter', 'book', 'taxes and fees included', 'free cancellation', 'breakfast',
+      'online payment', 'check-in payment', 'flash offer', 'flexible rate', 'half-board',
+      'gourmet half-board', 'select your room rate', 'select the type of bed',
+      'view room', 'selected room', 'choosing your room', 'update', 'add special code',
+      'occupation', 'help', 'login/register', 'arrival', 'departure', 'dates of stay',
+      'guest', 'member avantage', 'non cancellable, non modifiable', 'taxes et frais inclus',
+      'annulation gratuite', 'petit-déjeuner', 'paiement en ligne', 'paiement à l\'arrivée',
+      'choisissez votre chambre', 'filtrer', 'voir la chambre', 'sélectionner', 'mettre à jour',
+      '/ night', '/ nuit', 'flash offer including breakfast', 'flexible rate breakfast included',
+      'from', 'à partir de'
+    ]);
+    const pageTitle = document.title.split(/[|\-–]/)[0].trim().toLowerCase();
 
-    const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, [class*="room"], [class*="chambre"]'));
+    const lines = document.body.innerText.split('\n').map(l => l.trim()).filter(Boolean);
+    const counts = {};
+    lines.forEach(l => { const k = l.toLowerCase().replace(/:$/, ''); counts[k] = (counts[k] || 0) + 1; });
+
     const seen = new Set();
-    const rooms = [];
-    const droppedNoPrice = [];
-
-    headings.forEach(h => {
-      const name = clean(h.textContent);
-      if (!name || name.length < 3 || name.length > 80 || seen.has(name)) return;
-
-      // Cherche un prix dans le bloc parent, jusqu'à 4 niveaux au-dessus
-      let container = h;
-      let priceText = null;
-      for (let i = 0; i < 4 && container; i++) {
-        const m = container.textContent.match(priceRegex);
-        if (m) { priceText = m[0]; break; }
-        container = container.parentElement;
-      }
-      if (!priceText) { droppedNoPrice.push(name); return; } // pas de prix associé, probablement pas une chambre
-
-      seen.add(name);
-      const blockText = (container || h).textContent.toLowerCase();
-      const available = !soldOutWords.some(w => blockText.includes(w));
-      rooms.push({
-        name, price: priceText.trim(), maxPersons: 2, available,
-        id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
-      });
+    const candidates = [];
+    lines.forEach((l, idx) => {
+      const key = l.toLowerCase().replace(/:$/, '');
+      if (seen.has(key)) return;
+      if (l.length < 3 || l.length > 60) return;
+      if (blocklist.has(key)) return;
+      if (key === pageTitle) return;
+      if (/\d/.test(l)) return; // un nom de chambre ne contient normalement pas de chiffre
+      if (priceRegex.test(l)) return;
+      if (counts[key] < 2) return; // doit apparaître au moins 2 fois sur la page (motif typique des sites de résa)
+      seen.add(key);
+      // ancre la recherche de prix sur la DERNIÈRE occurrence du nom (la section détail de la chambre), pas la première (liste d'onglets)
+      let lastIdx = idx;
+      lines.forEach((l2, i2) => { if (l2.toLowerCase().replace(/:$/, '') === key) lastIdx = i2; });
+      candidates.push({ name: l, idx: lastIdx });
     });
 
-    // Filet de sécurité : si aucune chambre nommée trouvée, cherche un compteur "X typologie(s) de chambres"
+    const rooms = candidates.map(c => {
+      let price = null;
+      let available = true;
+      for (let i = c.idx; i < Math.min(lines.length, c.idx + 60); i++) {
+        if (!price) {
+          const m = lines[i].match(priceRegex);
+          if (m) { price = m[0]; }
+        }
+        if (soldOutWords.some(w => lines[i].toLowerCase().includes(w))) available = false;
+        if (price) break;
+      }
+      return {
+        name: c.name, price: price || 'Voir le site', maxPersons: 2, available,
+        id: c.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      };
+    }).filter(r => r.price !== 'Voir le site'); // garde seulement les vrais types de chambres (avec un prix trouvé)
+
+    // Filet de sécurité : si rien trouvé, cherche un compteur "X typologie(s) de chambres"
     let typologyCount = 0;
     if (!rooms.length) {
-      const bodyText = document.body.innerText;
-      const m = bodyText.match(/(\d+)\s*typologies?\s*de\s*chambres?/i);
+      const m = document.body.innerText.match(/(\d+)\s*typolog(?:ies?|y)\s*(?:of|de)\s*rooms?|chambres?/i);
       if (m) typologyCount = parseInt(m[1], 10) || 0;
       if (typologyCount > 0) {
         rooms.push({ name: 'Chambre disponible', price: 'Voir le site', maxPersons: 2, available: true, id: 'disponible' });
       }
     }
 
-    return {
-      name: document.title.split(/[|\-–]/)[0].trim(),
-      rooms,
-      typologyCount,
-      debugHeadingsCount: headings.length,
-      debugDropped: droppedNoPrice.slice(0, 15),
-      debugBodySnippet: document.body.innerText.slice(0, 500)
-    };
+    return { name: document.title.split(/[|\-–]/)[0].trim(), rooms, typologyCount };
   });
 
   console.log('[GENERIC] Titre page:', data.name);
   console.log('[GENERIC] Chambres trouvées:', data.rooms.length, JSON.stringify(data.rooms));
-  console.log('[GENERIC] Headings scannés:', data.debugHeadingsCount, '— rejetés sans prix:', JSON.stringify(data.debugDropped));
   if (data.typologyCount) console.log('[GENERIC] Filet de sécurité activé, typologies détectées:', data.typologyCount);
 
   return { name: data.name, rooms: data.rooms, url };
