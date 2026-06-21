@@ -431,6 +431,7 @@ async function scrapeGeneric(page, url) {
     const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, [class*="room"], [class*="chambre"]'));
     const seen = new Set();
     const rooms = [];
+    const droppedNoPrice = [];
 
     headings.forEach(h => {
       const name = clean(h.textContent);
@@ -444,7 +445,7 @@ async function scrapeGeneric(page, url) {
         if (m) { priceText = m[0]; break; }
         container = container.parentElement;
       }
-      if (!priceText) return; // pas de prix associé, probablement pas une chambre
+      if (!priceText) { droppedNoPrice.push(name); return; } // pas de prix associé, probablement pas une chambre
 
       seen.add(name);
       const blockText = (container || h).textContent.toLowerCase();
@@ -455,11 +456,19 @@ async function scrapeGeneric(page, url) {
       });
     });
 
-    return { name: document.title.split(/[|\-–]/)[0].trim(), rooms };
+    return {
+      name: document.title.split(/[|\-–]/)[0].trim(),
+      rooms,
+      debugHeadingsCount: headings.length,
+      debugDropped: droppedNoPrice.slice(0, 15),
+      debugBodySnippet: document.body.innerText.slice(0, 500)
+    };
   });
 
   console.log('[GENERIC] Titre page:', data.name);
   console.log('[GENERIC] Chambres trouvées:', data.rooms.length, JSON.stringify(data.rooms));
+  console.log('[GENERIC] Headings scannés:', data.debugHeadingsCount, '— rejetés sans prix:', JSON.stringify(data.debugDropped));
+  console.log('[GENERIC] Extrait du texte de la page:', data.debugBodySnippet);
 
   return { name: data.name, rooms: data.rooms, url };
 }
