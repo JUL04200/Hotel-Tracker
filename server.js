@@ -188,11 +188,24 @@ async function dismissCookieBanner(page) {
   }
 }
 
+// File d'attente globale : un seul Chrome à la fois (Railway n'a pas les ressources pour plusieurs en parallèle)
+let scrapeQueueTail = Promise.resolve();
+function enqueueScrape(fn) {
+  const run = scrapeQueueTail.then(fn, fn);
+  scrapeQueueTail = run.then(() => {}, () => {});
+  return run;
+}
+
 async function scrapeHotel(url, checkin, checkout, persons) {
+  return enqueueScrape(() => scrapeHotelInner(url, checkin, checkout, persons));
+}
+
+async function scrapeHotelInner(url, checkin, checkout, persons) {
   const isCloud = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.RENDER || !process.env.LOCALAPPDATA;
   const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
   const browser = await puppeteer.launch({
     headless: isCloud ? false : 'new',
+    protocolTimeout: 120000,
     executablePath: isCloud
       ? (process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable')
       : 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
