@@ -445,11 +445,21 @@ async function scrapeGeneric(page, url) {
     const counts = {};
     lines.forEach(l => { const k = l.toLowerCase().replace(/:$/, ''); counts[k] = (counts[k] || 0) + 1; });
 
+    // Repère structurel (FR/EN) : les vrais noms de chambres apparaissent tous AVANT cette section ;
+    // les noms de formules tarifaires (offre flash, tarif flexible, etc.) n'apparaissent qu'après.
+    const sectionMarkers = ['type de lit', 'type of bed', 'tarif de votre chambre', 'select your room rate', 'sélectionnez le tarif'];
+    let cutoffIdx = lines.length;
+    lines.forEach((l, idx) => {
+      const lower = l.toLowerCase();
+      if (idx < cutoffIdx && sectionMarkers.some(m => lower.includes(m))) cutoffIdx = idx;
+    });
+
     const seen = new Set();
     const candidates = [];
     lines.forEach((l, idx) => {
       const key = l.toLowerCase().replace(/:$/, '');
       if (seen.has(key)) return;
+      if (idx >= cutoffIdx) return; // doit apparaître dans la zone "liste des chambres", avant les formules tarifaires
       if (l.length < 3 || l.length > 60) return;
       if (blocklist.has(key)) return;
       if (key === pageTitle) return;
